@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:hive_app/providers/event_provider.dart';
+import 'package:hive_app/providers/goal_provider.dart';
+import 'package:hive_app/providers/group_provider.dart';
+import 'package:hive_app/providers/task_provider.dart';
+import 'package:hive_app/providers/user_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../providers/auth_provider.dart';
+import 'main_screen.dart'; // ВАЖНЫЙ ИМПОРТ
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -15,7 +21,6 @@ class _AuthScreenState extends State<AuthScreen> {
   bool isLogin = true;
   bool _obscurePassword = true;
 
-  // Контроллеры для полей ввода
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _userCtrl = TextEditingController();
@@ -30,245 +35,155 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
-  // Метод отправки данных
-  void _submit() async {
-    final auth = context.read<AuthProvider>();
+// В AuthScreen.dart измените метод _submit:
 
-    // Валидация полей
-    if (_emailCtrl.text.trim().isEmpty || _passCtrl.text.trim().isEmpty) {
-      _showSnackBar("Пожалуйста, заполните все обязательные поля");
-      return;
-    }
+void _submit() async {
+  final auth = context.read<AuthProvider>();
 
-    if (!isLogin) {
-      if (_userCtrl.text.trim().isEmpty) {
-        _showSnackBar("Введите имя пользователя");
-        return;
-      }
-      if (_passCtrl.text != _confirmPassCtrl.text) {
-        _showSnackBar("Пароли не совпадают");
-        return;
-      }
-    }
-
-    // Вызов методов провайдера
-    bool success;
-    if (isLogin) {
-      success = await auth.login(
-        _emailCtrl.text.trim(), 
-        _passCtrl.text.trim()
-      );
-    } else {
-      success = await auth.register(
-        _userCtrl.text.trim(),
-        _emailCtrl.text.trim(),
-        _passCtrl.text.trim(),
-      );
-    }
-
-    if (!mounted) return;
-
-    if (success) {
-      if (isLogin) {
-        auth.completeAuth(); // Вход в приложение
-      } else {
-        setState(() => isLogin = true); // Переключение на вход после регистрации
-        _showSnackBar("Регистрация успешна! Теперь войдите в аккаунт", isError: false);
-      }
-    } else {
-      _showSnackBar("Произошла ошибка. Проверьте данные и попробуйте снова");
-    }
+  if (_emailCtrl.text.trim().isEmpty || _passCtrl.text.trim().isEmpty) {
+    _showSnackBar("Заполните все поля");
+    return;
   }
 
-  void _showSnackBar(String message, {bool isError = true}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.redAccent : Colors.green,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.all(20),
-      ),
-    );
+  if (!isLogin && _passCtrl.text != _confirmPassCtrl.text) {
+    _showSnackBar("Пароли не совпадают");
+    return;
+  }
+
+  bool success;
+  if (isLogin) {
+    success = await auth.login(_emailCtrl.text.trim(), _passCtrl.text.trim());
+  } else {
+    success = await auth.register(_userCtrl.text.trim(), _emailCtrl.text.trim(), _passCtrl.text.trim());
+  }
+
+  if (!mounted) return;
+
+  if (success) {
+    if (isLogin) {
+      // --- НОВАЯ ЛОГИКА: ФОНОВАЯ ПРЕДЗАГРУЗКА ДАННЫХ ---
+      _prepareAppData(context);
+      
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const MainScreen()),
+        (route) => false,
+      );
+    } else {
+      setState(() => isLogin = true);
+      _showSnackBar("Успех! Теперь войдите", isError: false);
+    }
+  } else {
+    _showSnackBar("Ошибка входа. Проверьте почту/пароль");
+  }
+}
+
+// Добавьте этот метод в _AuthScreenState:
+Future<void> _prepareAppData(BuildContext context) async {
+  final auth = context.read<AuthProvider>();
+  final myId = auth.user?.id; // Получаем ID вошедшего пользователя
+  
+  if (myId == null) return;
+
+  await Future.wait([
+    context.read<TaskProvider>().loadAllTasks(),
+    context.read<EventProvider>().loadEvents(),
+    context.read<GroupProvider>().loadAllRoadmaps(),
+    // ИСПРАВЛЕНИЕ: Передаем myId внутрь метода
+    context.read<UserProvider>().loadMyProfile(myId), 
+    context.read<GoalProvider>().loadGoals(myId),
+  ]);
+}
+
+  void _showSnackBar(String m, {bool isError = true}) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(m), backgroundColor: isError ? Colors.redAccent : Colors.green,
+      behavior: SnackBarBehavior.floating, margin: const EdgeInsets.all(20),
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
     final isLoading = context.watch<AuthProvider>().isLoading;
-    final size = MediaQuery.of(context).size;
-    final bool isWide = size.width > 900; // Проверка для Web/Desktop
+    final bool isWide = MediaQuery.of(context).size.width > 900;
 
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Row(
         children: [
-          // Левая часть для широких экранов (Декор)
           if (isWide)
             Expanded(
-              flex: 1,
               child: Container(
                 decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [AppColors.navy, AppColors.secondary],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
+                  gradient: LinearGradient(colors: [AppColors.navy, Color(0xFF0055BB)]),
                 ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.hive_rounded, size: 120, color: Colors.white),
+                    const Icon(Icons.hive_rounded, size: 100, color: Colors.white),
                     const SizedBox(height: 20),
-                    Text(
-                      "HIVE",
-                      style: GoogleFonts.orbitron(
-                        fontSize: 48,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        letterSpacing: 10,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      "Платформа совместного роста",
-                      style: GoogleFonts.manrope(
-                        fontSize: 18,
-                        color: Colors.white.withOpacity(0.7),
-                      ),
-                    ),
+                    Text("HIVE", style: GoogleFonts.orbitron(fontSize: 48, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 8)),
+                    const Text("Твой путь к целям", style: TextStyle(color: Colors.white70, fontSize: 18)),
                   ],
                 ),
               ),
             ),
-
-          // Правая часть (Форма)
           Expanded(
-            flex: 1,
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 450),
+                constraints: const BoxConstraints(maxWidth: 400),
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 40),
+                  padding: const EdgeInsets.all(40),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Логотип для мобильной версии
-                      if (!isWide) ...[
-                        const Center(
-                          child: Icon(Icons.hive_rounded, size: 80, color: AppColors.primary),
-                        ),
-                        const SizedBox(height: 40),
-                      ],
-
-                      Text(
-                        isLogin ? "С возвращением!" : "Создать аккаунт",
-                        style: GoogleFonts.manrope(
-                          fontSize: 32,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.textDark,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        isLogin 
-                          ? "Войдите, чтобы продолжить работу" 
-                          : "Зарегистрируйтесь, чтобы начать планирование",
-                        style: AppTextStyles.caption,
-                      ),
-                      const SizedBox(height: 40),
-
-                      // Поля ввода
+                      if (!isWide) const Center(child: Icon(Icons.hive_rounded, size: 60, color: AppColors.primary)),
+                      const SizedBox(height: 30),
+                      Text(isLogin ? "Вход" : "Регистрация", style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 30),
+                      
                       if (!isLogin) ...[
-                        _buildLabel("ИМЯ ПОЛЬЗОВАТЕЛЯ"),
-                        TextField(
-                          controller: _userCtrl,
-                          decoration: AppDecorations.smartInput("Ваш никнейм", Icons.person_outline),
-                        ),
+                        _label("НИКНЕЙМ"),
+                        TextField(controller: _userCtrl, decoration: const InputDecoration(hintText: "Username")),
                         const SizedBox(height: 20),
                       ],
-
-                      _buildLabel("EMAIL"),
-                      TextField(
-                        controller: _emailCtrl,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: AppDecorations.smartInput("example@mail.com", Icons.alternate_email_rounded),
-                      ),
+                      
+                      _label("EMAIL"),
+                      TextField(controller: _emailCtrl, decoration: const InputDecoration(hintText: "mail@example.com")),
                       const SizedBox(height: 20),
-
-                      _buildLabel("ПАРОЛЬ"),
+                      
+                      _label("ПАРОЛЬ"),
                       TextField(
-                        controller: _passCtrl,
+                        controller: _passCtrl, 
                         obscureText: _obscurePassword,
-                        decoration: AppDecorations.smartInput("••••••••", Icons.lock_outline_rounded).copyWith(
+                        decoration: InputDecoration(
+                          hintText: "********",
                           suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                              color: Colors.grey,
-                              size: 20,
-                            ),
+                            icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
                             onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                          ),
+                          )
                         ),
                       ),
 
                       if (!isLogin) ...[
                         const SizedBox(height: 20),
-                        _buildLabel("ПОДТВЕРЖДЕНИЕ ПАРОЛЯ"),
-                        TextField(
-                          controller: _confirmPassCtrl,
-                          obscureText: _obscurePassword,
-                          decoration: AppDecorations.smartInput("Повторите пароль", Icons.lock_reset_rounded),
-                        ),
+                        _label("ПОВТОР ПАРОЛЯ"),
+                        TextField(controller: _confirmPassCtrl, obscureText: _obscurePassword),
                       ],
-
+                      
                       const SizedBox(height: 40),
-
-                      // Кнопка входа
+                      
                       SizedBox(
-                        width: double.infinity,
-                        height: 60,
+                        width: double.infinity, height: 60,
                         child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.navy,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                            elevation: 0,
-                          ),
                           onPressed: isLoading ? null : _submit,
-                          child: isLoading
-                              ? const SizedBox(
-                                  height: 24,
-                                  width: 24,
-                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
-                                )
-                              : Text(
-                                  isLogin ? "ВОЙТИ" : "ЗАРЕГИСТРИРОВАТЬСЯ",
-                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                                ),
+                          style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, foregroundColor: Colors.white),
+                          child: isLoading ? const CircularProgressIndicator(color: Colors.white) : Text(isLogin ? "ВОЙТИ" : "СОЗДАТЬ АККАУНТ"),
                         ),
                       ),
-
-                      const SizedBox(height: 24),
-
-                      // Переключатель режима
-                      Center(
-                        child: TextButton(
-                          onPressed: () => setState(() => isLogin = !isLogin),
-                          child: RichText(
-                            text: TextSpan(
-                              style: GoogleFonts.manrope(fontSize: 14, color: AppColors.textGrey),
-                              children: [
-                                TextSpan(text: isLogin ? "Впервые у нас? " : "Уже есть аккаунт? "),
-                                TextSpan(
-                                  text: isLogin ? "Создать профиль" : "Войти здесь",
-                                  style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
+                      
+                      const SizedBox(height: 20),
+                      Center(child: TextButton(onPressed: () => setState(() => isLogin = !isLogin), child: Text(isLogin ? "Еще нет аккаунта? Зарегистрироваться" : "Уже есть профиль? Войти"))),
                     ],
                   ),
                 ),
@@ -280,18 +195,5 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
-  Widget _buildLabel(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 8),
-      child: Text(
-        text,
-        style: const TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w900,
-          color: AppColors.textGrey,
-          letterSpacing: 1.2,
-        ),
-      ),
-    );
-  }
+  Widget _label(String t) => Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(t, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)));
 }

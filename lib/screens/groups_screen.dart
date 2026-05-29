@@ -62,24 +62,45 @@ class _GroupsScreenState extends State<GroupsScreen> {
     );
   }
 
+  // ИСПРАВЛЕНО: Используем Material вместо Container с decoration + ListTile
   Widget _buildGroupTile(BuildContext context, g) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10)],
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
-        leading: CircleAvatar(
-          radius: 25,
-          backgroundColor: AppColors.primary.withValues(alpha: 0.1),
-          child: Text(g.name[0].toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.navy)),
-        ),
-        title: Text(g.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-        subtitle: Text(g.isSolo ? "Личный чат" : "Группа: ${g.membersCount} участников", style: const TextStyle(fontSize: 12)),
-        trailing: const Icon(Icons.chevron_right_rounded, color: Colors.grey),
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      elevation: 0,
+      shadowColor: Colors.black.withOpacity(0.03),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(group: g))),
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 25,
+                backgroundColor: AppColors.primary.withOpacity(0.1),
+                child: Text(g.name[0].toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.navy)),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(g.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    const SizedBox(height: 4),
+                    Text(
+                      g.isSolo ? "Личный чат" : "Группа: ${g.membersCount} участников", 
+                      style: const TextStyle(fontSize: 12, color: Colors.grey)
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: Colors.grey),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -89,7 +110,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.chat_bubble_outline_rounded, size: 60, color: Colors.grey.withValues(alpha: 0.2)),
+          Icon(Icons.chat_bubble_outline_rounded, size: 60, color: Colors.grey.withOpacity(0.2)),
           const SizedBox(height: 15),
           const Text("У вас пока нет активных чатов", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
         ],

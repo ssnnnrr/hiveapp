@@ -22,7 +22,7 @@ class UserDto {
   final String email;
   final String? avatarUrl;
   final double rating;
-  final String synergyLevel; // ВЕРНУЛИ ЭТО ПОЛЕ
+  final String synergyLevel;
 
   UserDto({
     required this.id, 
@@ -30,16 +30,16 @@ class UserDto {
     required this.email, 
     this.avatarUrl, 
     required this.rating,
-    required this.synergyLevel, // Добавили в конструктор
+    required this.synergyLevel,
   });
 
   factory UserDto.fromJson(Map<String, dynamic> json) => UserDto(
-    id: json['id'],
-    username: json['username'],
+    id: json['id'] ?? 0,
+    username: json['username'] ?? "",
     email: json['email'] ?? "",
     avatarUrl: json['avatarUrl'],
     rating: (json['rating'] ?? 0.0).toDouble(),
-    synergyLevel: json['synergyLevel'] ?? "None", // Читаем из JSON
+    synergyLevel: json['synergyLevel'] ?? "None",
   );
 }
 
@@ -117,23 +117,36 @@ class MaterialDto {
   final String content;
   final String type;
   final int creatorId;
+  final String creatorName;
+  final String? creatorAvatarUrl;
   final DateTime createdAt;
-  final int? taskId; // ДОБАВИТЬ ЭТУ СТРОКУ
+  final int? taskId;
+  final String? taskTitle;
 
   MaterialDto({
-    required this.id, required this.title, required this.content,
-    required this.type, required this.creatorId, required this.createdAt,
-    this.taskId, // ДОБАВИТЬ СЮДА
+    required this.id,
+    required this.title,
+    required this.content,
+    required this.type,
+    required this.creatorId,
+    required this.creatorName,
+    this.creatorAvatarUrl,
+    required this.createdAt,
+    this.taskId,
+    this.taskTitle,
   });
 
   factory MaterialDto.fromJson(Map<String, dynamic> json) => MaterialDto(
-    id: json['id'],
+    id: json['id'] ?? 0,
     title: json['title'] ?? "",
     content: json['content'] ?? "",
     type: json['type'] ?? "Link",
     creatorId: json['creatorId'] ?? 0,
+    creatorName: json['creatorName'] ?? "Пользователь",
+    creatorAvatarUrl: json['creatorAvatarUrl'],
     createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
-    taskId: json['taskId'], // И СЮДА
+    taskId: json['taskId'],
+    taskTitle: json['taskTitle'],
   );
 }
 
@@ -141,17 +154,16 @@ class TaskResponse {
   final int id;
   final String title;
   final DateTime dueDate;
-  String status;
+  final String status;
   final int goalId;
   final String goalTitle;
   final int creatorId;
   final int? assigneeId;
+  final List<TaskCommentDto> comments;
   final String? artifactUrl;
-  String? studentComment;
+  final String? studentComment;
   final String? teacherComment;
-  final List<String> completions;
-  final String? studentName; // Добавляем имя студента
-  final String? studentAvatarUrl; // Добавляем аватар студента
+  final List<UserMinimalDto> completions;
 
   TaskResponse({
     required this.id,
@@ -163,11 +175,10 @@ class TaskResponse {
     required this.creatorId,
     this.assigneeId,
     this.artifactUrl,
+    this.comments = const [],
     this.studentComment,
     this.teacherComment,
-    this.completions = const [],
-    this.studentName,
-    this.studentAvatarUrl,
+    required this.completions,
   });
 
   TaskResponse copyWith({
@@ -182,9 +193,8 @@ class TaskResponse {
     String? artifactUrl,
     String? studentComment,
     String? teacherComment,
-    List<String>? completions,
-    String? studentName,
-    String? studentAvatarUrl,
+    List<UserMinimalDto>? completions,
+    List<TaskCommentDto>? comments,
   }) {
     return TaskResponse(
       id: id ?? this.id,
@@ -192,6 +202,7 @@ class TaskResponse {
       dueDate: dueDate ?? this.dueDate,
       status: status ?? this.status,
       goalId: goalId ?? this.goalId,
+      comments: comments ?? this.comments,
       goalTitle: goalTitle ?? this.goalTitle,
       creatorId: creatorId ?? this.creatorId,
       assigneeId: assigneeId ?? this.assigneeId,
@@ -199,47 +210,94 @@ class TaskResponse {
       studentComment: studentComment ?? this.studentComment,
       teacherComment: teacherComment ?? this.teacherComment,
       completions: completions ?? this.completions,
-      studentName: studentName ?? this.studentName,
-      studentAvatarUrl: studentAvatarUrl ?? this.studentAvatarUrl,
     );
   }
 
   factory TaskResponse.fromJson(Map<String, dynamic> json) {
+    // 1. Парсим список выполнивших задачу
+    final fetchedCompletions = (json['completions'] as List? ?? [])
+        .map((e) => UserMinimalDto.fromJson(e))
+        .toList();
+
+    // 2. РЕШЕНИЕ ПРОБЛЕМЫ ДАТЫ: 
+    // Получаем строку, парсим её и ПРИНУДИТЕЛЬНО выставляем полдень по местному времени.
+    // Это нейтрализует сдвиг часовых поясов, из-за которого 00:00 превращалось в 21:00 вчерашнего дня.
+    String rawDate = json['dueDate'] ?? DateTime.now().toIso8601String();
+    DateTime parsed = DateTime.parse(rawDate).toLocal();
+    DateTime normalizedDate = DateTime(parsed.year, parsed.month, parsed.day, 12, 0, 0);
+
     return TaskResponse(
-      id: json['id'],
-      title: json['title'],
-      dueDate: DateTime.parse(json['dueDate']),
-      status: json['status'],
-      goalId: json['goalId'],
+      id: json['id'] ?? 0,
+      title: json['title'] ?? '',
+      dueDate: normalizedDate, // Используем "безопасную" дату (полдень)
+      status: json['status'] ?? 'ToDo',
+      goalId: json['goalId'] ?? 0,
       goalTitle: json['goalTitle'] ?? '',
-      creatorId: json['creatorId'],
+      creatorId: json['creatorId'] ?? 0,
       assigneeId: json['assigneeId'],
       artifactUrl: json['artifactUrl'],
       studentComment: json['studentComment'],
       teacherComment: json['teacherComment'],
-      completions: json['completions'] != null 
-        ? List<String>.from(json['completions']) 
-        : [],
-      studentName: json['studentName'],
-      studentAvatarUrl: json['studentAvatarUrl'],
+      completions: fetchedCompletions,
+      comments: (json['comments'] as List?)
+          ?.map((e) => TaskCommentDto.fromJson(e))
+          .toList() ?? [],
     );
   }
 }
 
+class TaskCommentDto {
+  final int id;
+  final int userId;
+  final String userName;
+  final String? avatarUrl;
+  final String text;
+  final DateTime createdAt;
+
+  TaskCommentDto({
+    required this.id,
+    required this.userId,
+    required this.userName,
+    this.avatarUrl,
+    required this.text,
+    required this.createdAt,
+  });
+
+  factory TaskCommentDto.fromJson(Map<String, dynamic> json) => TaskCommentDto(
+    id: json['id'] ?? 0,
+    userId: json['userId'] ?? 0,
+    userName: json['userName'] ?? "Аноним",
+    avatarUrl: json['avatarUrl'],
+    text: json['text'] ?? "",
+    createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
+  );
+}
+
+class UserMinimalDto {
+  final String username;
+  final String? avatarUrl;
+
+  UserMinimalDto({required this.username, this.avatarUrl});
+
+  factory UserMinimalDto.fromJson(Map<String, dynamic> json) => UserMinimalDto(
+    username: json['username'] ?? "Аноним",
+    avatarUrl: json['avatarUrl'],
+  );
+}
 
 class GoalResponse {
   final int id;
   final String title;
   final String? description;
-  final String? measurableResult; // Добавлено
-  final DateTime targetDate; // Добавлено
+  final String? measurableResult;
+  final DateTime targetDate;
   final bool isSolo;
   final double progress;
   final List<TaskResponse> tasks;
   final List<GoalPartnerDto> collaborators;
   final List<MaterialDto> materials;
   final int userId;
-  final String goalType; // Добавлено
+  final String goalType;
 
   GoalResponse({
     required this.id, required this.title, this.description, this.measurableResult,
@@ -248,15 +306,14 @@ class GoalResponse {
     required this.userId, required this.goalType,
   });
 
-  // Этот метод исправит ошибку в GoalProvider
-  GoalResponse copyWith({double? progress, List<TaskResponse>? tasks, bool? isSolo}) {
+  GoalResponse copyWith({double? progress, List<TaskResponse>? tasks, List<GoalPartnerDto>? collaborators, bool? isSolo}) {
     return GoalResponse(
       id: id, title: title, description: description, 
       measurableResult: measurableResult, targetDate: targetDate,
       isSolo: isSolo ?? this.isSolo,
       progress: progress ?? this.progress,
       tasks: tasks ?? this.tasks,
-      collaborators: collaborators,
+      collaborators: collaborators ?? this.collaborators, 
       materials: materials,
       userId: userId,
       goalType: goalType,
@@ -264,7 +321,7 @@ class GoalResponse {
   }
 
   factory GoalResponse.fromJson(Map<String, dynamic> json) => GoalResponse(
-    id: json['id'],
+    id: json['id'] ?? 0,
     title: json['title'] ?? "",
     description: json['description'],
     measurableResult: json['measurableResult'],
@@ -279,16 +336,13 @@ class GoalResponse {
   );
 }
 
-
-
-
 class GoalPartnerDto {
   final int id;
   final String name;
   final double progress;
   final String? avatarUrl;
   final bool isConfirmed;
-  final bool isAdmin; // Для учебных групп
+  final bool isAdmin;
 
   GoalPartnerDto({
     required this.id,
@@ -301,7 +355,7 @@ class GoalPartnerDto {
 
   factory GoalPartnerDto.fromJson(Map<String, dynamic> json) => GoalPartnerDto(
     id: json['id'] ?? 0,
-    name: json['name'] ?? "",
+    name: json['name'] ?? json['username'] ?? "",
     progress: (json['progress'] ?? 0.0).toDouble(),
     avatarUrl: json['avatarUrl'],
     isConfirmed: json['isConfirmed'] ?? false,
@@ -309,20 +363,18 @@ class GoalPartnerDto {
   );
 }
 
-// --- MESSAGES, CHATS & NOTIFICATIONS ---
-
 class MessageDto {
   final int id;
   final String content;
   final int senderId;
   final String senderName;
   final DateTime sentAt;
+  final bool isPinned;
+  final int groupId;
+
   MessageDto({
-    required this.id,
-    required this.content,
-    required this.senderId,
-    required this.senderName,
-    required this.sentAt,
+    required this.id, required this.content, required this.senderId,
+    required this.senderName, required this.sentAt, this.isPinned = false, required this.groupId,
   });
   factory MessageDto.fromJson(Map<String, dynamic> json) => MessageDto(
     id: json['id'] ?? 0,
@@ -330,6 +382,8 @@ class MessageDto {
     senderId: json['senderId'] ?? 0,
     senderName: json['senderName'] ?? "Unknown",
     sentAt: DateTime.parse(json['sentAt'] ?? DateTime.now().toIso8601String()),
+    isPinned: json['isPinned'] ?? false,
+    groupId: json['groupId'] ?? 0,
   );
 }
 
@@ -423,63 +477,137 @@ class ChatRequestDto {
   );
 }
 
-// --- REMAINING MODELS ---
+
 
 class RoadmapStepDto {
   final int id;
   final String content;
-  final int creatorId;
   final DateTime dueDate;
-  final String status; // ToDo, UnderReview, Done
-  final String? instructionUrl;
-  final String? artifactUrl;
-  final String? teacherComment;
-  final String? groupName;
+  String status;
+  final int creatorId;
   final String? creatorName;
+  final String? instructionUrl;
+  String? artifactUrl;
+  final String? teacherComment;
+  String? studentComment;
+  final bool isTest;
+  final String? testData;
+  double? testScore;
+  final bool isRequired;
+  final int groupId; // Убираем final или оставляем, но даем дефолт
+  final int maxAttempts;
+  int usedAttempts;
 
   RoadmapStepDto({
     required this.id,
     required this.content,
-    required this.creatorId,
     required this.dueDate,
     required this.status,
+    required this.creatorId,
+    this.creatorName,
     this.instructionUrl,
     this.artifactUrl,
     this.teacherComment,
-    this.groupName,
-    this.creatorName,
+    this.studentComment,
+    this.isTest = false,
+    this.testData,
+    this.testScore,
+    this.isRequired = true,
+    this.groupId = 0,      // <--- ИЗМЕНИТЕ ЭТУ СТРОКУ (уберите required и добавьте = 0)
+    this.maxAttempts = 3,
+    this.usedAttempts = 0,
   });
 
-  // ДОБАВЬТЕ ЭТОТ МЕТОД:
-  RoadmapStepDto copyWith({String? status}) {
+  factory RoadmapStepDto.fromJson(Map<String, dynamic> json) {
+      final uA = json['usedAttempts'] ?? json['UsedAttempts'] ?? 0;
+  final status = json['status'] ?? json['Status'] ?? 'ToDo';
+  
+  // Если это тест, выведем инфу в консоль
+  if (json['isTest'] == true || json['IsTest'] == true) {
+    print("DEBUG PARSER: StepId: ${json['id']}, Status: $status, Attempts: $uA");
+  }
     return RoadmapStepDto(
-      id: id,
-      content: content,
-      creatorId: creatorId,
-      dueDate: dueDate,
-      status: status ?? this.status,
-      instructionUrl: instructionUrl,
-      artifactUrl: artifactUrl,
-      teacherComment: teacherComment,
-      groupName: groupName,
-      creatorName: creatorName,
+      id: json['id'],
+      content: json['content'] ?? '',
+      dueDate: DateTime.parse(json['dueDate'] ?? json['DueDate'] ?? DateTime.now().toIso8601String()),
+      status: json['status'] ?? 'ToDo',
+      creatorId: json['creatorId'],
+      creatorName: json['creatorName'],
+      instructionUrl: json['instructionUrl'],
+      artifactUrl: json['artifactUrl'],
+      teacherComment: json['teacherComment'],
+      studentComment: json['studentComment'],
+      isTest: json['isTest'] ?? false,
+      testData: json['testData'],
+      testScore: (json['testScore'] ?? json['TestScore'])?.toDouble(),
+      isRequired: json['isRequired'] ?? true,
+      groupId: json['groupId'] ?? 0, // <--- И ТУТ ДОБАВЬТЕ ?? 0
+      maxAttempts: json['maxAttempts'] ?? json['MaxAttempts'] ?? 3,
+      usedAttempts: json['usedAttempts'] ?? json['UsedAttempts'] ?? 0,
+    );
+  }
+}
+
+
+class StepCommentDto {
+  final int id;
+  final int userId;
+  final String userName;
+  final String text;
+  final DateTime createdAt;
+
+  StepCommentDto({
+    required this.id,
+    required this.userId,
+    required this.userName,
+    required this.text,
+    required this.createdAt,
+  });
+
+  factory StepCommentDto.fromJson(Map<String, dynamic> json) {
+    return StepCommentDto(
+      id: json['id'] ?? 0,
+      userId: json['userId'] ?? 0,
+      userName: json['userName'] ?? 'Unknown',
+      text: json['text'] ?? '',
+      createdAt: DateTime.parse(json['createdAt']),
+    );
+  }
+}
+
+// --- ДОБАВИТЬ/ОБНОВИТЬ В all_models.dart ---
+
+class TestQuestion {
+  final String question;
+  final List<String> options;
+  final dynamic correctAnswer; // Может быть String для одиночного или List для множественного
+  final String type; // 'single', 'multiple', 'boolean'
+
+  TestQuestion({
+    required this.question,
+    required this.options,
+    required this.correctAnswer,
+    this.type = 'single',
+  });
+
+  factory TestQuestion.fromJson(Map<String, dynamic> json) {
+    return TestQuestion(
+      question: json['question'] ?? '',
+      options: List<String>.from(json['options'] ?? []),
+      correctAnswer: json['correctAnswer'],
+      type: json['type'] ?? 'single',
     );
   }
 
-  factory RoadmapStepDto.fromJson(Map<String, dynamic> json) => RoadmapStepDto(
-    id: json['id'] ?? 0,
-    content: json['content'] ?? "",
-    creatorId: json['creatorId'] ?? 0,
-    dueDate: DateTime.parse(json['dueDate'] ?? DateTime.now().toIso8601String()),
-    status: json['status'] ?? "ToDo",
-    instructionUrl: json['instructionUrl'],
-    artifactUrl: json['artifactUrl'],
-    teacherComment: json['teacherComment'],
-    groupName: json['groupName'],
-    creatorName: json['creatorName'],
-  );
+  Map<String, dynamic> toJson() {
+    return {
+      'question': question,
+      'options': options,
+      'correctAnswer': correctAnswer,
+      'type': type,
+    };
+  }
 }
-
 class ReviewDto {
   final int id;
   final int rating;
@@ -510,6 +638,9 @@ class EventResponse {
   final bool isCompleted;
   final int? groupId;
   final String creatorName;
+  final String? linkUrl;
+  final String? location;
+  final String? imageUrl; // Новое поле для фото
 
   EventResponse({
     required this.id,
@@ -519,16 +650,23 @@ class EventResponse {
     required this.isCompleted,
     this.groupId,
     required this.creatorName,
+    this.linkUrl,
+    this.location,
+    this.imageUrl,
   });
 
   factory EventResponse.fromJson(Map<String, dynamic> json) => EventResponse(
     id: json['id'] ?? 0,
     title: json['title'] ?? "",
     description: json['description'],
-    eventDate: DateTime.parse(json['eventDate'] ?? DateTime.now().toIso8601String()),
+    // Обязательно .toLocal() для корректного отображения времени
+    eventDate: DateTime.parse(json['eventDate'] ?? DateTime.now().toIso8601String()).toLocal(),
     isCompleted: json['isCompleted'] ?? false,
     groupId: json['groupId'],
     creatorName: json['creatorName'] ?? "Unknown",
+    linkUrl: json['linkUrl'],
+    location: json['location'],
+    imageUrl: json['imageUrl'],
   );
 }
 

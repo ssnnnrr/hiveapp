@@ -1,17 +1,19 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../providers/user_provider.dart';
 import '../providers/goal_provider.dart';
-import '../providers/event_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/notification_provider.dart';
+import '../providers/event_provider.dart';
+import '../providers/task_provider.dart';
+import '../providers/group_provider.dart';
 import '../models/all_models.dart';
 import '../theme/app_theme.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
+  
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
@@ -20,92 +22,134 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   @override
   void initState() {
     super.initState();
-    _refresh();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refresh();
+    });
   }
 
-  void _refresh() {
+  void _refresh() async {
     final user = context.read<AuthProvider>().user;
     if (user != null) {
+      await context.read<NotificationProvider>().loadNotifications();
       context.read<UserProvider>().loadRequests(); 
       context.read<GoalProvider>().loadGoals(user.id);
-      context.read<EventProvider>().loadEvents(); 
-      context.read<NotificationProvider>().loadNotifications();
+      
+      if (mounted) _cleanupStaleNotifications();
+    }
+  }
+
+  void _cleanupStaleNotifications() {
+    final notifProv = context.read<NotificationProvider>();
+    final eventProv = context.read<EventProvider>();
+    final taskProv = context.read<TaskProvider>();
+    final groupProv = context.read<GroupProvider>();
+    
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    List<int> idsToRemove = [];
+
+    for (var notification in notifProv.notifications) {
+      bool isStale = false;
+
+      if (notification.type == "EventOverdue") {
+        final liveEvent = eventProv.events.firstWhere(
+          (e) => notification.message.contains(e.title),
+          orElse: () => EventResponse(id: -1, title: '', eventDate: DateTime.now(), isCompleted: false, creatorName: ''),
+        );
+        if (liveEvent.id == -1 || liveEvent.isCompleted || !liveEvent.eventDate.toLocal().isBefore(now)) {
+          isStale = true;
+        }
+      } 
+      else if (notification.type == "TaskOverdue") {
+        final liveTask = taskProv.tasks.firstWhere(
+          (t) => notification.message.contains(t.title),
+          orElse: () => TaskResponse(id: -1, title: '', dueDate: DateTime.now(), status: '', goalId: 0, goalTitle: '', creatorId: 0, completions: []),
+        );
+        if (liveTask.id == -1 || liveTask.status == "Done" || !liveTask.dueDate.toLocal().isBefore(today)) {
+          isStale = true;
+        }
+      } 
+      else if (notification.type == "RoadmapOverdue") {
+        final liveStep = groupProv.allRoadmapSteps.firstWhere(
+          (s) => notification.message.contains(s.content),
+          orElse: () => RoadmapStepDto(id: -1, content: '', dueDate: DateTime.now(), status: '', creatorId: 0),
+        );
+        if (liveStep.id == -1 || liveStep.status == "Done" || !liveStep.dueDate.toLocal().isBefore(now)) {
+          isStale = true;
+        }
+      }
+
+      if (isStale) idsToRemove.add(notification.id);
+    }
+
+    if (idsToRemove.isNotEmpty) {
+      for (var id in idsToRemove) notifProv.markAsRead(id);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final notifyProv = context.watch<NotificationProvider>();
     final userProv = context.watch<UserProvider>();
     final goalProv = context.watch<GoalProvider>();
-    final eventProv = context.watch<EventProvider>();
-    final notifyProv = context.watch<NotificationProvider>();
     final myId = context.read<AuthProvider>().user?.id;
 
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    double width = MediaQuery.of(context).size.width;
+    bool isWide = width > 850;
 
-    // 1. Приглашения в команды (Модуль 1)
     final goalInvites = goalProv.goals.where((g) => 
       g.collaborators.any((c) => c.id == myId && !c.isConfirmed)).toList();
 
-    // 2. Пропущенные дедлайны (Модуль 3: Для желтого колокольчика)
-    final missedEvents = eventProv.events.where((e) => e.eventDate.isBefore(now) && !e.isCompleted).toList();
-    final missedTasks = goalProv.goals
-        .expand((g) => g.tasks)
-        .where((t) => t.dueDate.isBefore(today) && t.status != "Done")
-        .toList();
-
-    // 3. Системные уведомления по обучению (Модуль 2)
-    final appNotes = notifyProv.notifications.where((n) => !n.isRead).toList();
-
-       return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
+    return Scaffold(
+      backgroundColor: isWide ? const Color(0xFFE2E8F0) : const Color(0xFFF8FAFC),
+      appBar: isWide ? null : AppBar(
         backgroundColor: Colors.white,
-        elevation: 0,
-        leading: BackButton(color: AppColors.navy, onPressed: () => Navigator.pop(context)),
-        title: const Text("ЦЕНТР УВЕДОМЛЕНИЙ", style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 2)),
-        centerTitle: true,
+        elevation: 0.5,
+        leading: const BackButton(color: AppColors.navy),
+        title: const Text("Уведомления", style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold)),
       ),
-      // ЦЕНТРИРУЕМ И ОГРАНИЧИВАЕМ ШИРИНУ
-      body: Center( 
+      body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 800), // Максимальная ширина 800px
-          child: RefreshIndicator(
-            onRefresh: () async => _refresh(),
-            child: ListView(
-              padding: const EdgeInsets.all(25),
+          constraints: BoxConstraints(maxWidth: isWide ? 750 : double.infinity),
+          child: Container(
+            margin: EdgeInsets.symmetric(vertical: isWide ? 40 : 0),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(isWide ? 25 : 0),
+              boxShadow: isWide ? [BoxShadow(color: Colors.black12, blurRadius: 20)] : null,
+            ),
+            child: Column(
               children: [
-            // --- СЕКЦИЯ: ОБМЕН НАВЫКАМИ (Задания от учителя) ---
-            if (appNotes.isNotEmpty) ...[
-              _sectionLabel("ОБУЧЕНИЕ И ПРОВЕРКА"),
-              ...appNotes.map((n) => _buildAppNoteTile(n)),
-              const SizedBox(height: 25),
-            ],
-
-            // --- СЕКЦИЯ: ПРОПУЩЕННЫЕ ДЕДЛАЙНЫ (С ПЕРЕХОДОМ) ---
-            if (missedEvents.isNotEmpty || missedTasks.isNotEmpty) ...[
-              _sectionLabel("ПРОСРОЧЕНО (НАЖМИТЕ ДЛЯ ПЕРЕНОСА)"),
-              ...missedEvents.map((e) => _buildMissedTile(e.title, e.eventDate, Icons.event_busy_rounded, Colors.orange)),
-              ...missedTasks.map((t) => _buildMissedTile(t.title, t.dueDate, Icons.warning_amber_rounded, Colors.redAccent)),
-              const SizedBox(height: 25),
-            ],
-
-            // --- СЕКЦИЯ: ЗАПРОСЫ В ПАРТНЕРЫ ---
-            if (userProv.pendingRequests.isNotEmpty) ...[
-              _sectionLabel("НОВЫЕ ЗАПРОСЫ В ПАРТНЕРЫ"),
-              ...userProv.pendingRequests.map((req) => _buildPartnerRequestTile(req, userProv)),
-              const SizedBox(height: 25),
-            ],
-
-            // --- СЕКЦИЯ: ПРИГЛАШЕНИЯ В ГРУППЫ ---
-            if (goalInvites.isNotEmpty) ...[
-              _sectionLabel("КОМАНДНЫЕ МАРШРУТЫ"),
-              ...goalInvites.map((g) => _buildInviteTile(g, goalProv, myId!)),
-            ],
-
-            if (_isEmpty(userProv, goalInvites, missedEvents, missedTasks, appNotes))
-              _buildEmptyState(),
+                if (isWide) _buildWebHeader(notifyProv),
+                Expanded(
+                  child: notifyProv.isLoading 
+                    ? const Center(child: CircularProgressIndicator())
+                    : RefreshIndicator(
+                        onRefresh: () async => _refresh(),
+                        child: ListView(
+                          padding: const EdgeInsets.all(25),
+                          children: [
+                            if (notifyProv.notifications.isNotEmpty) ...[
+                              _sectionLabel("АКТУАЛЬНОЕ"),
+                              ...notifyProv.notifications.map((n) => _buildNotificationTile(n)),
+                              const SizedBox(height: 25),
+                            ],
+                            if (userProv.pendingRequests.isNotEmpty) ...[
+                              _sectionLabel("ПАРТНЕРСТВО"),
+                              ...userProv.pendingRequests.map((r) => _buildPartnerRequestTile(r)),
+                              const SizedBox(height: 25),
+                            ],
+                            if (goalInvites.isNotEmpty) ...[
+                              _sectionLabel("КОМАНДНЫЕ ЦЕЛИ"),
+                              ...goalInvites.map((g) => _buildGoalInviteTile(g, goalProv, myId!)),
+                            ],
+                            if (notifyProv.notifications.isEmpty && userProv.pendingRequests.isEmpty && goalInvites.isEmpty)
+                              _buildEmpty(),
+                          ],
+                        ),
+                      ),
+                ),
               ],
             ),
           ),
@@ -114,175 +158,75 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  Widget _sectionLabel(String text) => Padding(
-    padding: const EdgeInsets.only(left: 5, bottom: 12),
-    child: Text(text, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.grey, letterSpacing: 1)),
+  Widget _buildWebHeader(NotificationProvider prov) => Container(
+    padding: const EdgeInsets.all(25),
+    decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9)))),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        const Text("Уведомления", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.navy)),
+        TextButton.icon(onPressed: () => prov.markAllAsRead(), icon: const Icon(Icons.done_all), label: const Text("Очистить все"))
+      ],
+    ),
   );
-  
-  // --- ПЛИТКА ПРОСРОЧКИ (С ПЕРЕХОДОМ В КАЛЕНДАРЬ) ---
-Widget _buildMissedTile(String title, DateTime date, IconData icon, Color col) {
-  return Container(
-    margin: const EdgeInsets.only(bottom: 12),
-    decoration: AppDecorations.glassCard,
-    child: ListTile(
-      leading: CircleAvatar(backgroundColor: col.withOpacity(0.1), child: Icon(icon, color: col, size: 20)),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-      subtitle: Text("Нужно было: ${DateFormat('dd.MM.yyyy').format(date)}", style: const TextStyle(fontSize: 11)),
-      trailing: const Icon(Icons.calendar_today_rounded, size: 16, color: Colors.grey),
-      // --- ВОТ ЭТА МАГИЯ ---
+
+  Widget _sectionLabel(String t) => Padding(padding: const EdgeInsets.only(bottom: 15, left: 5), child: Text(t, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.grey, letterSpacing: 1.5)));
+
+  Widget _buildNotificationTile(AppNotification n) {
+  bool isUrgent = n.type == "EventOverdue" || n.type == "TaskOverdue" || n.type == "RoadmapOverdue";
+      return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: isUrgent ? const Color(0xFFFFF5F5) : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: isUrgent ? Colors.redAccent.withOpacity(0.1) : Colors.transparent),
+      ),
+      child: ListTile(
+      leading: Icon(isUrgent ? Icons.warning : Icons.notifications, color: isUrgent ? Colors.red : Colors.blue),
+      title: Text(n.title),
+      subtitle: Text(n.message),
       onTap: () {
-        Navigator.pop(context, date); // Возвращаем дату события
+        context.read<NotificationProvider>().markAsRead(n.id);
+        
+        // ЕСЛИ ЕСТЬ ДАННЫЕ О ДАТЕ (должны приходить с бэкенда в поле Data)
+        if (n.data != null) {
+          try {
+            // Парсим дату просроченного задания
+            DateTime targetDate = DateTime.parse(n.data!);
+            // Возвращаемся на главный экран и передаем дату
+            Navigator.pop(context, targetDate); 
+          } catch (e) {
+            Navigator.pop(context);
+          }
+        } else {
+          Navigator.pop(context);
+        }
       },
     ),
   );
 }
 
-  // --- УВЕДОМЛЕНИЯ ПО ОБУЧЕНИЮ (МОДУЛЬ 2) ---
-  Widget _buildAppNoteTile(AppNotification n) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: AppDecorations.glassCard,
+  Widget _buildPartnerRequestTile(ChatRequestDto req) {
+    final userProv = context.read<UserProvider>();
+    return Card(
+      elevation: 0, color: const Color(0xFFF8FAFC), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
       child: ListTile(
-        leading: _getNoteIcon(n.type),
-        title: Text(n.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-        subtitle: Text(n.message, style: const TextStyle(fontSize: 12)),
-        trailing: TextButton(
-          onPressed: () {
-            context.read<NotificationProvider>().markAsRead(n.id);
-            // Возвращаем дату создания уведомления, чтобы MainScreen открыл этот день
-            Navigator.pop(context, n.createdAt); 
-          },
-          child: const Text("ПЕРЕЙТИ", style: TextStyle(fontWeight: FontWeight.w900, color: AppColors.primary, fontSize: 10)),
-        ),
+        leading: CircleAvatar(backgroundImage: req.senderAvatar != null ? MemoryImage(base64Decode(req.senderAvatar!)) : null, child: req.senderAvatar == null ? Text(req.senderName[0]) : null),
+        title: Text(req.senderName, style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: const Text("Запрос на обмен навыками"),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [IconButton(icon: const Icon(Icons.check_circle, color: Colors.green), onPressed: () => userProv.acceptChatRequest(req.id)), IconButton(icon: const Icon(Icons.cancel, color: Colors.redAccent), onPressed: () => userProv.declineChatRequest(req.id))]),
       ),
     );
   }
 
-  // --- ЗАПРОСЫ В ПАРТНЕРЫ (С АВАТАРКАМИ) ---
-Widget _buildPartnerRequestTile(ChatRequestDto req, UserProvider prov) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: AppDecorations.glassCard.copyWith(
-        // Добавим легкую рамку, чтобы выделить запрос среди обычных уведомлений
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.1), width: 1.5),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        
-        // 1. АВАТАРКА ОТПРАВИТЕЛЯ (с использованием нашего нового хелпера)
-        leading: _buildUserAvatar(req.senderAvatar, req.senderName, radius: 26),
-        
-        // 2. ИНФОРМАЦИЯ
-        title: Text(
-          req.senderName,
-          style: const TextStyle(
-            fontWeight: FontWeight.w800, 
-            fontSize: 15, 
-            color: AppColors.navy
-          ),
-        ),
-        subtitle: const Text(
-          "Хочет стать вашим партнером и обучаться вместе",
-          style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.3),
-        ),
-        
-        // 3. КНОПКИ ДЕЙСТВИЯ
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Кнопка ПРИНЯТЬ
-            GestureDetector(
-              onTap: () => prov.acceptChatRequest(req.id),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.check_rounded, color: Colors.green, size: 22),
-              ),
-            ),
-            const SizedBox(width: 12),
-            // Кнопка ОТКЛОНИТЬ
-            GestureDetector(
-              onTap: () => prov.declineChatRequest(req.id),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.redAccent.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.close_rounded, color: Colors.redAccent, size: 22),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildUserAvatar(String? avatarBase64, String name, {double radius = 16}) {
-  return CircleAvatar(
-    radius: radius,
-    backgroundColor: AppColors.navy.withValues(alpha: 0.1),
-    backgroundImage: (avatarBase64 != null && avatarBase64.isNotEmpty)
-        ? MemoryImage(base64Decode(avatarBase64))
-        : null,
-    child: (avatarBase64 == null || avatarBase64.isEmpty)
-        ? Text(
-            name.isNotEmpty ? name[0].toUpperCase() : "?",
-            style: TextStyle(
-              fontSize: radius * 0.8,
-              fontWeight: FontWeight.bold,
-              color: AppColors.navy,
-            ),
-          )
-        : null,
-  );
-}
-
-  // --- ПРИГЛАШЕНИЯ В ГРУППЫ (МОДУЛЬ 1) ---
-  Widget _buildInviteTile(GoalResponse goal, GoalProvider prov, int myId) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: AppDecorations.glassCard,
-      child: ListTile(
-        leading: const Icon(Icons.group_add_rounded, color: AppColors.navy),
-        title: Text(goal.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-        subtitle: const Text("Вас пригласили в команду", style: TextStyle(fontSize: 11)),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextButton(onPressed: () => prov.respondToGoalInvite(goal.id, true, myId), child: const Text("ПРИНЯТЬ")),
-            TextButton(onPressed: () => prov.respondToGoalInvite(goal.id, false, myId), child: const Text("НЕТ", style: TextStyle(color: Colors.grey))),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-
-  Widget _getNoteIcon(String? type) {
-    IconData icon = Icons.notifications_active;
-    Color col = AppColors.primary;
-    if (type == "TaskReview") { icon = Icons.rate_review; col = Colors.orange; }
-    if (type == "TaskApproved") { icon = Icons.verified; col = Colors.green; }
-    if (type == "RoadmapReview") { icon = Icons.psychology; col = Colors.purple; }
-    return CircleAvatar(backgroundColor: col.withOpacity(0.1), child: Icon(icon, color: col, size: 18));
-  }
-
-  bool _isEmpty(UserProvider u, List g, List e, List t, List n) => 
-    u.pendingRequests.isEmpty && g.isEmpty && e.isEmpty && t.isEmpty && n.isEmpty;
-
-  Widget _buildEmptyState() => Center(
-    child: Column(
-      children: [
-        const SizedBox(height: 100),
-        Icon(Icons.notifications_off_outlined, size: 64, color: Colors.grey.withOpacity(0.1)),
-        const SizedBox(height: 20),
-        const Text("Все задачи под контролем", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
-      ],
+  Widget _buildGoalInviteTile(GoalResponse goal, GoalProvider prov, int myId) => Card(
+    elevation: 0, color: const Color(0xFFF8FAFC), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+    child: ListTile(
+      title: Text(goal.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+      subtitle: const Text("Приглашение в команду"),
+      trailing: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy), onPressed: () => prov.respondToGoalInvite(goal.id, true, myId), child: const Text("ПРИНЯТЬ", style: TextStyle(color: Colors.white, fontSize: 10))),
     ),
   );
+
+  Widget _buildEmpty() => const Center(child: Padding(padding: EdgeInsets.all(40), child: Text("Уведомлений нет", style: TextStyle(color: Colors.grey))));
 }

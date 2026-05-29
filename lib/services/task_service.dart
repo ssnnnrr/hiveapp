@@ -18,7 +18,48 @@ class TaskService {
     }
   }
 
-  // Создание задачи
+  // Обновление статуса задачи (выполнено/нет)
+  Future<bool> updateTaskStatus(int taskId, String status, String? comment) async {
+    try {
+      final response = await _api.dio.patch("/Tasks/$taskId/status", data: {
+        "Status": status,
+        "Comment": comment ?? "",
+      });
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint("TaskService Error (updateTaskStatus): $e");
+      return false;
+    }
+  }
+
+  // Отправка комментария к задаче
+  Future<TaskCommentDto?> postComment(int taskId, String text) async {
+    try {
+      final response = await _api.dio.post("/Tasks/comments", data: {
+        "taskId": taskId,
+        "text": text,
+      });
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return TaskCommentDto.fromJson(response.data);
+      }
+    } catch (e) {
+      debugPrint("TaskService Error (postComment): $e");
+    }
+    return null;
+  }
+
+  // Удаление комментария
+  Future<bool> deleteComment(int commentId) async {
+    try {
+      final response = await _api.dio.delete('/Tasks/comments/$commentId'); 
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint("TaskService Error (deleteComment): $e");
+      return false;
+    }
+  }
+
+  // Создание новой задачи (этапа)
   Future<bool> createTask({
     required int goalId,
     required String title,
@@ -37,55 +78,6 @@ class TaskService {
     }
   }
 
-  // Обновление задачи
-  Future<bool> updateTask({
-    required int taskId,
-    required int goalId,
-    required String title,
-    required DateTime dueDate,
-  }) async {
-    try {
-      final response = await _api.dio.put("/Tasks/$taskId", data: {
-        "goalId": goalId,
-        "title": title,
-        "dueDate": dueDate.toIso8601String(),
-      });
-      return response.statusCode == 200;
-    } catch (e) {
-      debugPrint("TaskService Error (updateTask): $e");
-      return false;
-    }
-  }
-
-  // Обновление статуса задачи - ИСПОЛЬЗУЕМ PATCH вместо PUT
-  Future<bool> updateTaskStatus(
-    int taskId, 
-    String status, 
-    String? comment
-  ) async {
-    try {
-      // Пробуем PATCH запрос
-      final response = await _api.dio.patch("/Tasks/$taskId/status", data: {
-        "status": status,
-        "studentComment": comment,
-      });
-      return response.statusCode == 200;
-    } catch (e) {
-      debugPrint("TaskService Error (updateTaskStatus): $e");
-      // Пробуем альтернативный эндпоинт
-      try {
-        final response = await _api.dio.post("/Tasks/$taskId/status", data: {
-          "status": status,
-          "studentComment": comment,
-        });
-        return response.statusCode == 200;
-      } catch (e2) {
-        debugPrint("TaskService Error (updateTaskStatus alt): $e2");
-        return false;
-      }
-    }
-  }
-
   // Удаление задачи
   Future<bool> deleteTask(int taskId) async {
     try {
@@ -93,19 +85,6 @@ class TaskService {
       return response.statusCode == 200;
     } catch (e) {
       debugPrint("TaskService Error (deleteTask): $e");
-      return false;
-    }
-  }
-
-  // Обновление комментария учителя
-  Future<bool> updateTeacherComment(int taskId, String comment) async {
-    try {
-      final response = await _api.dio.patch("/Tasks/$taskId/teacher-comment", data: {
-        "teacherComment": comment,
-      });
-      return response.statusCode == 200;
-    } catch (e) {
-      debugPrint("TaskService Error (updateTeacherComment): $e");
       return false;
     }
   }

@@ -5,53 +5,66 @@ import 'api_client.dart';
 class GoalService {
   final ApiClient _api = ApiClient();
 
-  Future<List<GoalResponse>> getGoals(int userId) async {
+  // Получение целей пользователя (Метод переименован для соответствия Провайдеру)
+  Future<List<GoalResponse>> getUserGoals(int userId) async {
     try {
       final response = await _api.dio.get("/Goals/user/$userId");
       return (response.data as List).map((e) => GoalResponse.fromJson(e)).toList();
     } catch (e) {
-      debugPrint("GoalService Error (getGoals): $e");
+      debugPrint("GoalService Error (getUserGoals): $e");
       return [];
     }
   }
 
-
-  // В GoalService.dart
-Future<bool> addMaterial({
-  required int goalId,
-  required String title,
-  required String content,
-  required String type,
-  int? taskId, // Добавляем необязательный параметр
-}) async {
-  try {
-    final response = await _api.dio.post("/Goals/materials", data: {
-      "goalId": goalId,
-      "title": title,
-      "content": content,
-      "type": type,
-      "taskId": taskId, // Отправляем taskId на бэкенд
-    });
-    return response.statusCode == 200 || response.statusCode == 201;
-  } catch (e) {
-    debugPrint("GoalService Error (addMaterial): $e");
-    return false;
+  // Добавление материала (база знаний)
+  Future<bool> addMaterial({
+    required int goalId,
+    required String title,
+    required String content,
+    required String type,
+    int? taskId,
+  }) async {
+    try {
+      final response = await _api.dio.post("/Goals/materials", data: {
+        "goalId": goalId,
+        "title": title,
+        "content": content,
+        "type": type,
+        "taskId": taskId,
+      });
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) {
+      debugPrint("GoalService Error (addMaterial): $e");
+      return false;
+    }
   }
-}
 
-Future<bool> updateGoal(int id, String title, bool isSolo) async {
-  try {
-    final response = await _api.dio.put("/Goals/$id", data: {
-      "title": title,
-      "isSolo": isSolo
-    });
-    return response.statusCode == 200;
-  } catch (e) {
-    debugPrint("GoalService Error (updateGoal): $e");
-    return false;
+  // Обновление параметров цели
+  Future<bool> updateGoal(int id, String title, bool isSolo) async {
+    try {
+      final response = await _api.dio.put("/Goals/$id", data: {
+        "title": title,
+        "isSolo": isSolo
+      });
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint("GoalService Error (updateGoal): $e");
+      return false;
+    }
   }
-}
 
+  // Перевод цели в личный режим (Метод переименован для соответствия Провайдеру)
+  Future<bool> convertToSolo(int goalId) async {
+    try {
+      final response = await _api.dio.post("/Goals/$goalId/make-solo");
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint("GoalService Error (convertToSolo): $e");
+      return false;
+    }
+  }
+
+  // Генерация черновика через AI
   Future<List<TaskDraftResponse>> generateDraft(String title, String why, String result, DateTime date) async {
     try {
       final response = await _api.dio.post("/Goals/generate-draft", data: {
@@ -67,6 +80,7 @@ Future<bool> updateGoal(int id, String title, bool isSolo) async {
     }
   }
 
+  // Ответ на приглашение
   Future<bool> respondToInvite(int goalId, bool accept) async {
     try {
       final response = await _api.dio.post("/Goals/invitation/$goalId/respond?accept=$accept");
@@ -76,7 +90,7 @@ Future<bool> updateGoal(int id, String title, bool isSolo) async {
     }
   }
 
-  // Создание цели с учетом типа (Social, Exchange, Group)
+  // Создание SMART-цели с шагами
   Future<bool> createSmartGoal({
     required String title,
     required String why,
@@ -93,7 +107,7 @@ Future<bool> updateGoal(int id, String title, bool isSolo) async {
         "measurableResult": result,
         "targetDate": date.toIso8601String(),
         "isSolo": isSolo,
-        "goalType": goalType, // Наш новый параметр
+        "goalType": goalType,
         "steps": steps.map((s) => s.toJson()).toList()
       });
       return response.statusCode == 200 || response.statusCode == 201;
@@ -103,7 +117,7 @@ Future<bool> updateGoal(int id, String title, bool isSolo) async {
     }
   }
 
-  // --- МАТЕРИАЛЫ (БАЗА ЗНАНИЙ) ---
+  // Удаление материала
   Future<bool> deleteMaterial(int materialId) async {
     try {
       final response = await _api.dio.delete("/Goals/materials/$materialId");
@@ -114,6 +128,7 @@ Future<bool> updateGoal(int id, String title, bool isSolo) async {
     }
   }
 
+  // Приглашение партнера
   Future<bool> invitePartner(int goalId, int partnerId) async {
     try {
       final response = await _api.dio.post("/Goals/$goalId/invite/$partnerId");
@@ -123,6 +138,7 @@ Future<bool> updateGoal(int id, String title, bool isSolo) async {
     }
   }
 
+  // Удаление цели
   Future<bool> deleteGoal(int id) async {
     try {
       final response = await _api.dio.delete("/Goals/$id");

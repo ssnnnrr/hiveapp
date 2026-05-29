@@ -1,15 +1,21 @@
 import 'dart:convert';
-import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
-import 'package:hive_app/services/task_service.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:fl_chart/fl_chart.dart';
+
+// Импорты внутренних ресурсов
 import '../models/all_models.dart';
 import '../providers/task_provider.dart';
 import '../providers/goal_provider.dart';
 import '../providers/auth_provider.dart';
+import '../providers/user_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/main_dashboard_layout.dart';
 
+/// ЭКРАН ДЕТАЛЕЙ МАРШРУТА (GOAL DETAILS)
+/// Содержит Дашборд, Базу знаний, Управление командой и Метрики
 class GoalDetailsScreen extends StatefulWidget {
   final GoalResponse goal;
   const GoalDetailsScreen({super.key, required this.goal});
@@ -20,173 +26,301 @@ class GoalDetailsScreen extends StatefulWidget {
 
 class _GoalDetailsScreenState extends State<GoalDetailsScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    
+    // Синхронизация данных с сервером при входе
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<TaskProvider>().loadTasks(widget.goal.id);
+      context.read<UserProvider>().loadFriends();
     });
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-Future<void> _toggleTask(TaskResponse t, GoalResponse goal) async {
-  final newStatus = t.status == "Done" ? "ToDo" : "Done";
-  // Используем TaskProvider вместо TaskService напрямую
-  await context.read<TaskProvider>().updateTaskStatus(t.id, newStatus, t.studentComment);
-}
+  // ---------------------------------------------------------------------------
+  // --- ЛОГИКА РАСЧЕТОВ (МЕТРИКИ И ПРОГРЕСС) ---
+  // ---------------------------------------------------------------------------
 
-  @override
-  Widget build(BuildContext context) {
-    final goalProv = context.watch<GoalProvider>();
-    final currentGoal = goalProv.goals.firstWhere((g) => g.id == widget.goal.id, orElse: () => widget.goal);
-    final tasks = context.watch<TaskProvider>().tasks;
-    final progress = tasks.isEmpty ? 0.0 : (tasks.where((t) => t.status == "Done").length / tasks.length) * 100;
+  /// Считает прогресс конкретного пользователя по списку completions
+  double _calcUserProgress(List<TaskResponse> tasks, String username) {
+    if (tasks.isEmpty) return 0.0;
+    int done = tasks.where((t) => t.completions.any((c) => c.username == username)).length;
+    return (done / tasks.length) * 100;
+  }
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Text(currentGoal.title, style: AppTextStyles.h2),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, color: AppColors.navy),
-            onPressed: () => _showGoalSettings(currentGoal)
+  /// Собирает карту метрик для дашборда
+  Map<String, double> _getMetrics(List<TaskResponse> tasks, String myName, GoalResponse goal) {
+    if (tasks.isEmpty) return {"eff": 0, "sync": 0, "vel": 100};
+
+    // Личная эффективность (процент выполнения моих задач)
+    double efficiency = _calcUserProgress(tasks, myName);
+    
+    // Командная синхронизация (среднее арифметическое всех подтвержденных участников)
+    double teamSync = efficiency; 
+    if (!goal.isSolo) {
+      double totalSum = efficiency;
+      var activePartners = goal.collaborators.where((c) => c.isConfirmed).toList();
+      if (activePartners.isNotEmpty) {
+        for (var p in activePartners) {
+          totalSum += _calcUserProgress(tasks, p.name);
+        }
+        teamSync = totalSum / (activePartners.length + 1);
+      }
+    }
+
+    // Скорость прохождения (отношение выполненных в срок задач к общему числу просроченных)
+    final now = DateTime.now();
+    final pastTasks = tasks.where((t) => t.dueDate.isBefore(now)).toList();
+    double velocity = 100.0;
+    if (pastTasks.isNotEmpty) {
+      int onTimeCount = pastTasks.where((t) => t.completions.any((c) => c.username == myName)).length;
+      velocity = (onTimeCount / pastTasks.length) * 100;
+    }
+
+    return {"eff": efficiency, "sync": teamSync, "vel": velocity};
+  }
+
+  // ---------------------------------------------------------------------------
+  // --- ВСПОМОГАТЕЛЬНЫЕ UI ЭЛЕМЕНТЫ ---
+  // ---------------------------------------------------------------------------
+
+  /// Адаптивное модальное окно (центровка для Web/Desktop)
+  void _showHiveModal(Widget content) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 500), 
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              margin: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(32),
+                boxShadow: [
+                  BoxShadow(color: Colors.black26, blurRadius: 25, offset: const Offset(0, 10))
+                ],
+              ),
+              child: content,
+            ),
           ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: AppColors.navy,
-          unselectedLabelColor: Colors.grey,
-          indicatorColor: AppColors.primary,
-          tabs: const [
-            Tab(text: "ЗАДАЧИ"),
-            Tab(text: "БАЗА ЗНАНИЙ")
-          ],
         ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          Column(
-            children: [
-              _buildProgressHeader(progress),
-              Expanded(
-                child: tasks.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.task_alt, size: 64, color: Colors.grey.shade300),
-                          const SizedBox(height: 16),
-                          Text("Нет задач", style: TextStyle(color: Colors.grey.shade500, fontSize: 16)),
-                          const SizedBox(height: 8),
-                          Text("Нажмите + чтобы добавить шаг", style: TextStyle(color: Colors.grey.shade400, fontSize: 14)),
-                        ],
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: tasks.length,
-                      itemBuilder: (ctx, i) => _buildTaskCard(tasks[i], currentGoal),
-                    ),
-              ),
-            ],
-          ),
-          Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: ElevatedButton.icon(
-                  onPressed: () => _showAddMaterialSheet(currentGoal.id),
-                  icon: const Icon(Icons.add),
-                  label: const Text("Добавить материал"),
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 50),
-                    backgroundColor: AppColors.navy,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: currentGoal.materials.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.library_books, size: 64, color: Colors.grey.shade300),
-                          const SizedBox(height: 16),
-                          Text("Нет материалов", style: TextStyle(color: Colors.grey.shade500, fontSize: 16)),
-                        ],
-                      ),
-                    )
-                  : ListView.builder(
-                      itemCount: currentGoal.materials.length,
-                      itemBuilder: (ctx, i) => _buildMaterialCard(currentGoal.materials[i], currentGoal),
-                    ),
-              ),
-            ],
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showAddStepSheet(currentGoal.id),
-        backgroundColor: AppColors.primary,
-        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
 
-  Widget _buildProgressHeader(double progress) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      margin: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppColors.navy, AppColors.navy.withOpacity(0.8)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+  /// Стандартизированный аватар пользователя
+  Widget _userAvatar(String? url, String name, {double radius = 12}) {
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: AppColors.navy.withOpacity(0.1),
+      backgroundImage: (url != null && url.isNotEmpty) ? MemoryImage(base64Decode(url)) : null,
+      child: (url == null || url.isEmpty)
+          ? Text(name.isNotEmpty ? name[0].toUpperCase() : "?", 
+              style: TextStyle(fontSize: radius * 0.8, fontWeight: FontWeight.bold, color: AppColors.navy)) 
+          : null,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // --- ГЛАВНЫЙ ЭКРАН BUILD ---
+  // ---------------------------------------------------------------------------
+
+  @override
+  Widget build(BuildContext context) {
+    final goalProv = context.watch<GoalProvider>();
+    final taskProv = context.watch<TaskProvider>();
+    final authProv = context.read<AuthProvider>();
+
+    // Поиск актуального объекта цели в кеше провайдера
+    final goal = goalProv.goals.firstWhere((g) => g.id == widget.goal.id, orElse: () => widget.goal);
+    
+    final myUser = authProv.user;
+    final myName = myUser?.username ?? "";
+    bool isCreator = goal.userId == myUser?.id;
+
+    final metrics = _getMetrics(taskProv.tasks, myName, goal);
+    final double myLiveProg = taskProv.getProgress(myName);
+
+    double screenWidth = MediaQuery.of(context).size.width;
+    bool isWide = screenWidth > 1150;
+
+    return MainDashboardLayout(
+      selectedIndex: 1,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: _buildAppBar(goal, isCreator),
+        body: TabBarView(
+          controller: _tabController,
+          children: [
+            // ВКЛАДКА 1: ДАШБОРД
+            RefreshIndicator(
+              onRefresh: () => taskProv.loadTasks(goal.id),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(26),
+                child: isWide 
+                  ? _buildWideDashboard(goal, taskProv, myName, myUser, isCreator, metrics, myLiveProg)
+                  : _buildMobileDashboard(goal, taskProv, myName, myUser, isCreator, metrics, myLiveProg),
+              ),
+            ),
+            // ВКЛАДКА 2: МАТЕРИАЛЫ
+            _buildMaterialsTab(goal, isCreator),
+          ],
         ),
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.navy.withOpacity(0.3),
-            blurRadius: 15,
-            offset: const Offset(0, 8),
-          ),
-        ],
       ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // --- РАЗДЕЛ ДАШБОРДА (МАКЕТЫ) ---
+  // ---------------------------------------------------------------------------
+
+  /// Макет для больших экранов (Desktop / Web)
+  Widget _buildWideDashboard(GoalResponse g, TaskProvider prov, String name, UserDto? u, bool creator, Map<String, double> m, double prog) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Левая колонка: Круговой прогресс и Метрики
+        Expanded(
+          flex: 2,
+          child: Column(
+            children: [
+              _dashCard(_buildMainProgressCircle(prog)),
+              const SizedBox(height: 24),
+              _dashCard(_buildMetricsList(m, g.isSolo)),
+            ],
+          ),
+        ),
+        const SizedBox(width: 24),
+        // Центральная колонка: Основной список этапов
+        Expanded(
+          flex: 4,
+          child: _dashCard(_buildTaskListSection(g, prov, name, u, creator)),
+        ),
+        const SizedBox(width: 24),
+        // Правая колонка: Состав команды и График динамики
+        Expanded(
+          flex: 2,
+          child: Column(
+            children: [
+              if (!g.isSolo) ...[
+                _dashCard(_buildTeamManagementSection(g, prov.tasks, creator, u?.id)),
+                const SizedBox(height: 24),
+              ],
+              _dashCard(_buildProductivityChart(prov, name)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Макет для мобильных устройств (одна колонка)
+  Widget _buildMobileDashboard(GoalResponse g, TaskProvider prov, String name, UserDto? u, bool creator, Map<String, double> m, double prog) {
+    return Column(
+      children: [
+        _dashCard(_buildMainProgressCircle(prog)),
+        const SizedBox(height: 24),
+        _dashCard(_buildMetricsList(m, g.isSolo)),
+        const SizedBox(height: 32),
+        _buildTaskListSection(g, prov, name, u, creator),
+        const SizedBox(height: 32),
+        if (!g.isSolo) ...[
+          _dashCard(_buildTeamManagementSection(g, prov.tasks, creator, u?.id)),
+          const SizedBox(height: 32),
+        ],
+        _dashCard(_buildProductivityChart(prov, name)),
+        const SizedBox(height: 120), // Отступ для FAB
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // --- КОМПОНЕНТЫ ИНТЕРФЕЙСА (CARDS) ---
+  // ---------------------------------------------------------------------------
+
+  Widget _dashCard(Widget child) => Container(
+    width: double.infinity, padding: const EdgeInsets.all(24),
+    decoration: AppDecorations.glassCard, child: child,
+  );
+
+  /// Большой круглый индикатор личного прогресса
+  Widget _buildMainProgressCircle(double prog) {
+    return Column(
+      children: [
+        const Text("ВАШ ПРОГРЕСС", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: Colors.grey, letterSpacing: 1.2)),
+        const SizedBox(height: 30),
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            SizedBox(
+              height: 150, width: 150,
+              child: CircularProgressIndicator(
+                value: prog / 100,
+                strokeWidth: 14,
+                backgroundColor: AppColors.primary.withOpacity(0.05),
+                color: const Color(0xFF32D74B), // Насыщенный зеленый
+              ),
+            ),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text("${prog.toInt()}%", style: const TextStyle(fontSize: 40, fontWeight: FontWeight.w900, color: AppColors.navy)),
+                const Text("ВЫПОЛНЕНО", style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey)),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Линейные метрики (Эффективность, Синхрон, Темп)
+  Widget _buildMetricsList(Map<String, double> metrics, bool isSolo) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("АНАЛИТИКА ПУТИ", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: Colors.grey)),
+        const SizedBox(height: 25),
+        _metricItem("Личная эффективность", metrics['eff']!, Colors.blue),
+        if (!isSolo) _metricItem("Командный резонанс", metrics['sync']!, Colors.purple),
+        _metricItem("Темп прохождения", metrics['vel']!, Colors.orange),
+      ],
+    );
+  }
+
+  Widget _metricItem(String label, double val, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
       child: Column(
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                "Прогресс",
-                style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w500),
-              ),
-              Text(
-                "${progress.toInt()}%",
-                style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold),
-              ),
+              Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.navy)),
+              Text("${val.toInt()}%", style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
             child: LinearProgressIndicator(
-              value: progress / 100,
-              backgroundColor: Colors.white24,
-              valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
-              minHeight: 10,
+              value: val / 100, 
+              minHeight: 7, 
+              color: color, 
+              backgroundColor: color.withOpacity(0.08)
             ),
           ),
         ],
@@ -194,926 +328,833 @@ Future<void> _toggleTask(TaskResponse t, GoalResponse goal) async {
     );
   }
 
-  Widget _buildTaskCard(TaskResponse t, GoalResponse goal) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
+  // ---------------------------------------------------------------------------
+  // --- СПИСОК ЭТАПОВ (ШАГОВ К ЦЕЛИ) ---
+  // ---------------------------------------------------------------------------
+
+  Widget _buildTaskListSection(GoalResponse goal, TaskProvider prov, String name, UserDto? u, bool creator) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text("ЭТАПЫ МАРШРУТА", style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900, color: AppColors.navy)),
+            if (creator) 
+              IconButton(
+                onPressed: () => _showAddTaskModal(goal.id), 
+                icon: const Icon(Icons.add_circle_rounded, color: AppColors.primary, size: 30)
+              ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        if (prov.isLoading) const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator()))
+        else if (prov.tasks.isEmpty)
+          const Center(child: Padding(padding: EdgeInsets.all(50), child: Text("Задачи еще не добавлены", style: TextStyle(color: Colors.grey))))
+        else
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: prov.tasks.length,
+            itemBuilder: (ctx, i) {
+              final t = prov.tasks[i];
+              bool isDone = t.completions.any((c) => c.username == name);
+              return _buildStepCard(t, isDone, name, u, creator);
+            },
           ),
-        ],
+      ],
+    );
+  }
+
+  Widget _buildStepCard(TaskResponse t, bool isDone, String name, UserDto? u, bool creator) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 15),
+      decoration: BoxDecoration(
+        color: isDone ? const Color(0xFFF9FBFF) : Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: isDone ? Colors.green.withOpacity(0.25) : const Color(0xFFE8ECF1), width: 1.5),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          leading: Transform.scale(
+            scale: 1.4,
+            child: Checkbox(
+              value: isDone,
+              activeColor: Colors.green,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+              onChanged: (v) {
+                context.read<TaskProvider>().updateTaskStatus(
+                  taskId: t.id, 
+                  newStatus: isDone ? "ToDo" : "Done", 
+                  comment: null,
+                  userName: name, 
+                  userAvatar: u?.avatarUrl, 
+                  goalProvider: context.read<GoalProvider>()
+                );
+              },
+            ),
+          ),
+          title: Text(t.title, style: TextStyle(
+            fontWeight: FontWeight.w700, 
+            fontSize: 15, 
+            decoration: isDone ? TextDecoration.lineThrough : null, 
+            color: isDone ? Colors.grey : AppColors.navy
+          )),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 6),
+              // ОТОБРАЖЕНИЕ ДАТЫ ШАГА (с возможностью клика для автора)
+              InkWell(
+                onTap: creator ? () => _showEditTaskModal(t) : null,
+                child: Row(
+                  children: [
+                    const Icon(Icons.calendar_today_rounded, size: 12, color: AppColors.primary),
+                    const SizedBox(width: 6),
+                    Text(DateFormat('dd MMMM yyyy', 'ru').format(t.dueDate), 
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.primary)),
+                  ],
+                ),
+              ),
+              _buildCompletionsAvatarsRow(t.completions),
+            ],
+          ),
+          children: [_buildTaskExpandedDetails(t, creator)],
+        ),
+      ),
+    );
+  }
+
+  /// Список аватарок тех, кто выполнил шаг
+  Widget _buildCompletionsAvatarsRow(List<UserMinimalDto> completions) {
+    if (completions.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Wrap(
+        spacing: 6,
+        children: completions.map((c) => Tooltip(
+          message: c.username,
+          child: _userAvatar(c.avatarUrl, c.username, radius: 10),
+        )).toList(),
+      ),
+    );
+  }
+
+  /// Развернутое содержимое карточки шага (Боковые комментарии и управление)
+  Widget _buildTaskExpandedDetails(TaskResponse t, bool creator) {
+    final myId = context.read<AuthProvider>().user?.id;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFF),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(22)),
+        border: Border(top: BorderSide(color: Colors.grey.withOpacity(0.1))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
+          // ПАНЕЛЬ УПРАВЛЕНИЯ ЭТАПОМ ДЛЯ АВТОРА
+          if (creator) ...[
+            Row(
+              children: [
+                const Text("УПРАВЛЕНИЕ ЭТАПОМ:", style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.grey, letterSpacing: 0.5)),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () => _showEditTaskModal(t), 
+                  icon: const Icon(Icons.edit_rounded, size: 16),
+                  label: const Text("Изменить", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(width: 10),
+                IconButton(
+                  onPressed: () => _confirmDeleteTask(t), 
+                  icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
+                  tooltip: "Удалить шаг",
+                ),
+              ],
+            ),
+            const Divider(height: 30),
+          ],
+
+          const Text("ОБСУЖДЕНИЕ ЭТОГО ШАГА", style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.grey)),
+          const SizedBox(height: 15),
+
+          // СПИСОК КОММЕНТАРИЕВ (БОКОВОЙ СТИЛЬ)
+          ...t.comments.map((c) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Радио-кнопка с анимацией
-                GestureDetector(
-                  onTap: () => _toggleTask(t, goal),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: 28,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: t.status == "Done" ? Colors.green : Colors.grey.shade400,
-                        width: 2,
-                      ),
-                      color: t.status == "Done" ? Colors.green : Colors.transparent,
-                    ),
-                    child: t.status == "Done"
-                      ? const Icon(Icons.check, color: Colors.white, size: 18)
-                      : null,
-                  ),
-                ),
+                _userAvatar(c.avatarUrl, c.userName, radius: 15),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        t.title,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
-                          decoration: t.status == "Done" ? TextDecoration.lineThrough : null,
-                          color: t.status == "Done" ? Colors.grey : AppColors.navy,
-                        ),
-                      ),
-                      if (t.dueDate != null) ...[
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Icon(Icons.calendar_today, size: 12, color: Colors.grey.shade500),
-                            const SizedBox(width: 4),
-                            Text(
-                              DateFormat('dd.MM.yyyy').format(t.dueDate),
-                              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                // Кнопки действий
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: Icon(Icons.edit_outlined, size: 20, color: Colors.grey.shade600),
-                      onPressed: () => _showEditTaskDialog(t),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.delete_outline, size: 20, color: Colors.red.shade400),
-                      onPressed: () => _deleteTask(t, goal),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          // Комментарии
-          if (t.studentComment != null && t.studentComment!.isNotEmpty || 
-              t.teacherComment != null && t.teacherComment!.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                children: [
-                  const Divider(height: 1),
-                  const SizedBox(height: 12),
-                  // Комментарии пользователей
-                  ..._buildComments(t),
-                  const SizedBox(height: 8),
-                  // Кнопка добавления комментария
-                  InkWell(
-                    onTap: () => _showCommentDialog(t),
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade50,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade200),
-                      ),
-                      child: Row(
+                      Row(
                         children: [
-                          Icon(Icons.add_comment_outlined, size: 16, color: Colors.grey.shade500),
+                          Text(c.userName, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12, color: AppColors.navy)),
                           const SizedBox(width: 8),
-                          Text(
-                            "Добавить комментарий...",
-                            style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
-                          ),
+                          Text(DateFormat('HH:mm').format(c.createdAt), style: const TextStyle(fontSize: 10, color: Colors.grey)),
                         ],
                       ),
-                    ),
+                      const SizedBox(height: 4),
+                      Text(c.text, style: const TextStyle(fontSize: 13, height: 1.4, color: Colors.black87)),
+                    ],
                   ),
-                ],
-              ),
-            )
-          else
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: InkWell(
-                onTap: () => _showCommentDialog(t),
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade200),
+                ),
+                if (c.userId == myId)
+                  IconButton(
+                    onPressed: () => context.read<TaskProvider>().deleteComment(t.id, c.id), 
+                    icon: const Icon(Icons.close_rounded, size: 14, color: Colors.grey)
                   ),
-                  child: Row(
+              ],
+            ),
+          )),
+
+          _buildTaskCommentInputField(t.id),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTaskCommentInputField(int taskId) {
+    final TextEditingController ctrl = TextEditingController();
+    return Container(
+      margin: const EdgeInsets.only(top: 15),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white, 
+        borderRadius: BorderRadius.circular(15), 
+        border: Border.all(color: Colors.blue.shade50)
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: ctrl,
+              style: const TextStyle(fontSize: 13),
+              decoration: const InputDecoration(hintText: "Добавить ответ...", border: InputBorder.none, hintStyle: TextStyle(fontSize: 12)),
+            ),
+          ),
+          IconButton(
+            onPressed: () {
+              if (ctrl.text.trim().isNotEmpty) {
+                context.read<TaskProvider>().addComment(taskId, ctrl.text.trim());
+                ctrl.clear();
+              }
+            }, 
+            icon: const Icon(Icons.send_rounded, color: AppColors.primary, size: 20)
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // --- КОМАНДА: ЛОГИКА УДАЛЕНИЯ И ОЖИДАНИЯ ---
+  // ---------------------------------------------------------------------------
+
+  Widget _buildTeamManagementSection(GoalResponse g, List<TaskResponse> tasks, bool isCreator, int? myId) {
+    // Не показываем себя в списке партнеров
+    final partners = g.collaborators.where((c) => c.id != myId).toList();
+    if (partners.isEmpty) {
+      return const Column(
+        children: [
+          Icon(Icons.person_outline, color: Colors.grey, size: 40),
+          SizedBox(height: 10),
+          Text("Вы работаете один", style: TextStyle(color: Colors.grey, fontSize: 11)),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("КОМАНДА МАРШРУТА", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: Colors.grey)),
+        const SizedBox(height: 20),
+        ...partners.map((p) {
+          double pProg = _calcUserProgress(tasks, p.name);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 15),
+            child: Row(
+              children: [
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (p.isConfirmed) 
+                      SizedBox(height: 48, width: 48, child: CircularProgressIndicator(value: pProg/100, strokeWidth: 3, color: Colors.amber))
+                    else 
+                      const SizedBox(height: 48, width: 48, child: Icon(Icons.hourglass_empty_rounded, color: Colors.orange, size: 20)),
+                    _userAvatar(p.avatarUrl, p.name, radius: 20),
+                  ],
+                ),
+                const SizedBox(width: 15),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.add_comment_outlined, size: 16, color: Colors.grey.shade500),
-                      const SizedBox(width: 8),
+                      Text(p.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, overflow: TextOverflow.ellipsis)),
                       Text(
-                        "Добавить комментарий...",
-                        style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+                        p.isConfirmed ? "${pProg.toInt()}% завершено" : "Ожидает подтверждения", 
+                        style: TextStyle(fontSize: 10, color: p.isConfirmed ? Colors.grey : Colors.orange, fontWeight: p.isConfirmed ? FontWeight.normal : FontWeight.bold)
                       ),
                     ],
                   ),
                 ),
-              ),
+                // УДАЛЕНИЕ КОНКРЕТНОГО УЧАСТНИКА (ФОРК)
+                if (isCreator)
+                  IconButton(
+                    onPressed: () => _confirmSingleMemberRemoval(g.id, p), 
+                    icon: const Icon(Icons.person_remove_rounded, color: Colors.redAccent, size: 18),
+                    tooltip: "Удалить из группы",
+                  ),
+              ],
             ),
-        ],
-      ),
+          );
+        }).toList(),
+      ],
     );
   }
 
-  // ЕДИНСТВЕННЫЙ метод _buildComments
-// Замените метод _buildComments на этот:
-List<Widget> _buildComments(TaskResponse t) {
-  List<Widget> comments = [];
-  
-  // Показываем комментарий студента с правильным аватаром
-  if (t.studentComment != null && t.studentComment!.isNotEmpty) {
-    comments.add(
-      Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Используем аватар из completions или первую букву имени
-            CircleAvatar(
-              radius: 14,
-              backgroundColor: AppColors.primary.withOpacity(0.1),
-              backgroundImage: t.studentAvatarUrl != null 
-                ? MemoryImage(base64Decode(t.studentAvatarUrl!)) 
-                : null,
-              child: t.studentAvatarUrl == null
-                ? Text(
-                    t.completions.isNotEmpty 
-                      ? t.completions.first 
-                      : (t.studentName?.substring(0, 1).toUpperCase() ?? "У"),
-                    style: const TextStyle(
-                      fontSize: 12, 
-                      fontWeight: FontWeight.bold, 
-                      color: AppColors.primary
+  // ---------------------------------------------------------------------------
+  // --- ВКЛАДКА БАЗЫ ЗНАНИЙ (МАТЕРИАЛЫ) ---
+  // ---------------------------------------------------------------------------
+
+Widget _buildMaterialsTab(GoalResponse g, bool isCreator) {
+  final myId = context.read<AuthProvider>().user?.id;
+  // Партнер может добавлять, если он подтвержден
+  bool canAdd = isCreator || g.collaborators.any((c) => c.id == myId && c.isConfirmed);
+
+  return Column(
+    children: [
+      if (canAdd) 
+        Padding(
+          padding: const EdgeInsets.all(24),
+          child: ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, minimumSize: const Size(double.infinity, 55)),
+            icon: const Icon(Icons.add_link_rounded, color: Colors.white),
+            label: const Text("ДОБАВИТЬ НОВЫЕ ЗНАНИЯ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            onPressed: () => _showAddMaterialModal(g.id),
+          ),
+        ),
+      Expanded(
+        child: g.materials.isEmpty 
+          ? const Center(child: Text("Материалов в этом пути пока нет"))
+          : ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              itemCount: g.materials.length,
+              itemBuilder: (ctx, i) {
+                final m = g.materials[i];
+                // ИСПРАВЛЕНИЕ: Удалять/редактировать может только АВТОР материала или создатель ЦЕЛИ
+                bool canManageMaterial = m.creatorId == myId || isCreator;
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: AppDecorations.glassCard,
+                  child: ListTile(
+                    title: Text(m.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (m.taskTitle != null && m.taskTitle!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text("📌 ЭТАП: ${m.taskTitle}", style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 10)),
+                          ),
+                        Text("Загрузил: ${m.creatorName}", style: const TextStyle(fontSize: 10)),
+                      ],
                     ),
-                  )
-                : null,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(icon: const Icon(Icons.open_in_new), onPressed: () => launchUrl(Uri.parse(m.content))),
+                        if (canManageMaterial)
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                            onPressed: () => context.read<GoalProvider>().deleteMaterial(g.id, m.id),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Имя пользователя
-                  Text(
-                    t.studentName ?? "Пользователь",
-                    style: const TextStyle(
-                      fontSize: 12, 
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.navy,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      t.studentComment!,
-                      style: const TextStyle(fontSize: 13, color: AppColors.navy),
-                    ),
-                  ),
+      ),
+    ],
+  );
+}
+
+  // ---------------------------------------------------------------------------
+  // --- ГРАФИК ПРОДУКТИВНОСТИ ---
+  // ---------------------------------------------------------------------------
+
+  Widget _buildProductivityChart(TaskProvider prov, String myName) {
+    // Формируем точки на основе времени выполнения
+    List<FlSpot> spots = [const FlSpot(0, 0)];
+    int count = 0;
+    for (int i = 0; i < prov.tasks.length; i++) {
+      if (prov.tasks[i].completions.any((c) => c.username == myName)) {
+        count++;
+      }
+      spots.add(FlSpot((i + 1).toDouble(), count.toDouble()));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("ДИНАМИКА ПУТИ", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: Colors.grey)),
+        const SizedBox(height: 25),
+        SizedBox(
+          height: 150,
+          child: spots.length < 2 
+          ? const Center(child: Text("Недостаточно данных для графика", style: TextStyle(fontSize: 10, color: Colors.grey)))
+          : LineChart(
+              LineChartData(
+                gridData: const FlGridData(show: false),
+                titlesData: const FlTitlesData(show: false),
+                borderData: FlBorderData(show: false),
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: spots,
+                    isCurved: true,
+                    color: AppColors.primary,
+                    barWidth: 4,
+                    dotData: const FlDotData(show: false),
+                    belowBarData: BarAreaData(show: true, color: AppColors.primary.withOpacity(0.08)),
+                  )
                 ],
               ),
             ),
-            // Кнопки редактирования и удаления комментария
-            PopupMenuButton<String>(
-              icon: Icon(Icons.more_vert, size: 16, color: Colors.grey.shade500),
-              onSelected: (value) {
-                if (value == 'edit') {
-                  _showCommentDialog(t);
-                } else if (value == 'delete') {
-                  _deleteComment(t);
-                }
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'edit',
-                  child: Row(
-                    children: [
-                      Icon(Icons.edit, size: 16),
-                      SizedBox(width: 8),
-                      Text('Редактировать'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'delete',
-                  child: Row(
-                    children: [
-                      Icon(Icons.delete, size: 16, color: Colors.red),
-                      SizedBox(width: 8),
-                      Text('Удалить', style: TextStyle(color: Colors.red)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
         ),
-      ),
+      ],
     );
   }
-  
-  // Показываем комментарий учителя
-  if (t.teacherComment != null && t.teacherComment!.isNotEmpty) {
-    comments.add(
-      Row(
+
+  // ---------------------------------------------------------------------------
+  // --- APPBAR И КНОПКИ УПРАВЛЕНИЯ ---
+  // ---------------------------------------------------------------------------
+
+  PreferredSizeWidget _buildAppBar(GoalResponse g, bool isCreator) {
+    return AppBar(
+      backgroundColor: Colors.white,
+      elevation: 0.5,
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back_ios_new_rounded, color: AppColors.navy, size: 20),
+        onPressed: () => Navigator.pop(context),
+      ),
+      title: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
-            radius: 14,
-            backgroundColor: Colors.orange.withOpacity(0.1),
-            child: const Text(
-              "П",
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.orange),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  "Преподаватель",
-                  style: TextStyle(
-                    fontSize: 12, 
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.navy,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.05),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    t.teacherComment!,
-                    style: const TextStyle(fontSize: 13, color: AppColors.navy),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          Text(g.title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17, color: AppColors.navy)),
+          Text(g.isSolo ? "Личное обучение" : "Командная работа", style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold)),
         ],
       ),
+      actions: [
+        if (isCreator && !g.isSolo) 
+          IconButton(onPressed: () => _showInvitePartnerModal(g), icon: const Icon(Icons.person_add_alt_1_rounded, color: AppColors.primary)),
+        IconButton(onPressed: () => _showGoalSettingsModal(g, isCreator), icon: const Icon(Icons.settings_suggest_rounded, color: AppColors.navy)),
+        const SizedBox(width: 15),
+      ],
+      bottom: TabBar(
+        controller: _tabController,
+        labelColor: AppColors.primary,
+        unselectedLabelColor: Colors.grey,
+        indicatorColor: AppColors.primary,
+        indicatorWeight: 3,
+        tabs: const [Tab(text: "ДАШБОРД"), Tab(text: "МАТЕРИАЛЫ")],
+      ),
     );
   }
-  
-  return comments;
-}
 
-// Добавьте метод для удаления комментария
-void _deleteComment(TaskResponse t) async {
-  final confirm = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: const Text("Удалить комментарий?"),
-      content: const Text("Вы уверены, что хотите удалить этот комментарий?"),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text("Отмена"),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.red,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-          onPressed: () => Navigator.pop(ctx, true),
-          child: const Text("Удалить"),
-        ),
-      ],
-    ),
-  );
-  
-  if (confirm == true) {
-    await context.read<TaskProvider>().updateTaskStatus(t.id, t.status, null);
-  }
-}
+  // ---------------------------------------------------------------------------
+  // --- МОДАЛЬНЫЕ ОКНА И ДИАЛОГИ ПОДТВЕРЖДЕНИЯ ---
+  // ---------------------------------------------------------------------------
 
-
-
-  // Замените метод _buildMaterialCard:
-Widget _buildMaterialCard(MaterialDto material, GoalResponse goal) {
-  final authProv = context.watch<AuthProvider>();
-  final tasks = context.watch<TaskProvider>().tasks;
-  
-  // Находим связанную задачу
-  final linkedTask = material.taskId != null 
-    ? tasks.firstWhereOrNull((t) => t.id == material.taskId)
-    : null;
-  
-  return Container(
-    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.05),
-          blurRadius: 8,
-          offset: const Offset(0, 2),
-        ),
-      ],
-    ),
-    child: ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      leading: Container(
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(
-          color: AppColors.navy.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(
-          material.type == "Link" ? Icons.link : Icons.description,
-          color: AppColors.navy,
-        ),
-      ),
-      title: Text(
-        material.title,
-        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-      ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  /// Настройки цели с кнопками-иконками режима (как при создании)
+  void _showGoalSettingsModal(GoalResponse goal, bool isCreator) {
+    _showHiveModal(Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(height: 4),
-          // Показываем привязку к шагу
-          if (linkedTask != null) ...[
-            Row(
-              children: [
-                Icon(Icons.link, size: 12, color: AppColors.primary),
-                const SizedBox(width: 4),
-                Flexible(
-                  child: Text(
-                    "Привязан к: ${linkedTask.title}",
-                    style: TextStyle(fontSize: 12, color: AppColors.primary),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-          ],
-          // Информация о создателе
+          const Text("Управление маршрутом", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 19, color: AppColors.navy)),
+          const SizedBox(height: 10),
+          const Text("Измените режим или удалите цель", style: TextStyle(fontSize: 11, color: Colors.grey)),
+          const SizedBox(height: 35),
+          
           Row(
             children: [
-              CircleAvatar(
-                radius: 10,
-                backgroundColor: AppColors.primary.withOpacity(0.1),
-                backgroundImage: authProv.user?.avatarUrl != null 
-                  ? MemoryImage(base64Decode(authProv.user!.avatarUrl!)) 
-                  : null,
-                child: authProv.user?.avatarUrl == null
-                  ? Text(
-                      authProv.user?.username?.substring(0, 1).toUpperCase() ?? "?",
-                      style: const TextStyle(
-                        fontSize: 10, 
-                        fontWeight: FontWeight.bold, 
-                        color: AppColors.primary
-                      ),
-                    )
-                  : null,
+              _modeIconButton(
+                icon: Icons.person_outline_rounded,
+                label: "ЛИЧНЫЙ",
+                isSelected: goal.isSolo,
+                color: Colors.blueAccent,
+                onTap: () {
+                  if (goal.isSolo) return;
+                  Navigator.pop(context);
+                  _confirmTotalModeChangeToSolo(goal.id);
+                },
               ),
-              const SizedBox(width: 4),
-              Text(
-                DateFormat('dd.MM.yyyy').format(material.createdAt),
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+              const SizedBox(width: 20),
+              _modeIconButton(
+                icon: Icons.groups_rounded,
+                label: "ГРУППОВОЙ",
+                isSelected: !goal.isSolo,
+                color: Colors.orangeAccent,
+                onTap: () {
+                  if (!goal.isSolo) return;
+                  context.read<GoalProvider>().toggleGoalSoloStatus(goal.id, false);
+                  Navigator.pop(context);
+                },
               ),
             ],
+          ),
+          
+          const Divider(height: 60),
+          
+          ListTile(
+            onTap: () {
+              Navigator.pop(context);
+              context.read<GoalProvider>().removeGoal(goal.id, goal.userId);
+              Navigator.pop(context);
+            },
+            leading: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.redAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.delete_forever_rounded, color: Colors.redAccent)),
+            title: const Text("Удалить этот маршрут", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w900, fontSize: 14)),
+            subtitle: const Text("Действие необратимо", style: TextStyle(fontSize: 11)),
+          )
+        ],
+      ),
+    ));
+  }
+
+  Widget _modeIconButton({required IconData icon, required String label, required bool isSelected, required Color color, required VoidCallback onTap}) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          padding: const EdgeInsets.symmetric(vertical: 25),
+          decoration: BoxDecoration(
+            color: isSelected ? color : Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: color.withOpacity(isSelected ? 1 : 0.2), width: 2),
+            boxShadow: [if (isSelected) BoxShadow(color: color.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 6))],
+          ),
+          child: Column(
+            children: [
+              Icon(icon, color: isSelected ? Colors.white : color, size: 35),
+              const SizedBox(height: 12),
+              Text(label, style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: isSelected ? Colors.white : color)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Диалог: перевод всей цели в Личный режим (Кикаем всех с Форком)
+  void _confirmTotalModeChangeToSolo(int id) {
+    _showHiveModal(Padding(
+      padding: const EdgeInsets.all(35),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.warning_amber_rounded, size: 50, color: Colors.orange),
+          const SizedBox(height: 20),
+          const Text("СДЕЛАТЬ ПУТЬ ЛИЧНЫМ?", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+          const SizedBox(height: 15),
+          const Text(
+            "Внимание! Групповая работа будет прекращена. Все участники получат свою личную независимую копию со своим прогрессом, а ваша цель станет приватной. Продолжить?",
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: Colors.grey, height: 1.4),
+          ),
+          const SizedBox(height: 35),
+          Row(
+            children: [
+              Expanded(child: TextButton(onPressed: () => Navigator.pop(context), child: const Text("ОТМЕНА", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)))),
+              const SizedBox(width: 15),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
+                  onPressed: () {
+                    context.read<GoalProvider>().makeGoalPersonal(id);
+                    Navigator.pop(context);
+                  }, 
+                  child: const Text("ДА, РАЗДЕЛИТЬ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
+                ),
+              ),
+            ],
+          )
+        ],
+      ),
+    ));
+  }
+
+  /// Диалог: Удаление одного конкретного человека (с Форком для него)
+  void _confirmSingleMemberRemoval(int goalId, GoalPartnerDto p) {
+    _showHiveModal(Padding(
+      padding: const EdgeInsets.all(35),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.person_remove_rounded, size: 50, color: Colors.redAccent),
+          const SizedBox(height: 20),
+          Text("УДАЛИТЬ ${p.name.toUpperCase()}?", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+          const SizedBox(height: 15),
+          Text(
+            "У пользователя останется его личная копия этого маршрута со всеми текущими материалами и его галочками, но он больше не будет частью вашей группы. Продолжить?",
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: Colors.grey.shade600, height: 1.4),
+          ),
+          const SizedBox(height: 35),
+          Row(
+            children: [
+              Expanded(child: TextButton(onPressed: () => Navigator.pop(context), child: const Text("ОТМЕНА", style: TextStyle(color: Colors.grey)))),
+              const SizedBox(width: 15),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
+                  onPressed: () {
+                    // Здесь вызываем удаление из GoalProvider, которое на бэкенде делает Fork
+                    Navigator.pop(context);
+                  }, 
+                  child: const Text("ДА, УДАЛИТЬ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
+                ),
+              ),
+            ],
+          )
+        ],
+      ),
+    ));
+  }
+
+  // ---------------------------------------------------------------------------
+  // --- ДИАЛОГИ СОЗДАНИЯ / РЕДАКТИРОВАНИЯ ЭЛЕМЕНТОВ ---
+  // ---------------------------------------------------------------------------
+
+  void _showAddTaskModal(int gid) {
+    final titleCtrl = TextEditingController();
+    DateTime date = DateTime.now().add(const Duration(days: 1));
+    _showHiveModal(StatefulBuilder(builder: (ctx, setSt) => Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text("НОВЫЙ ЭТАП ПУТИ", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy)),
+          const SizedBox(height: 25),
+          TextField(controller: titleCtrl, decoration: AppDecorations.smartInput("Что необходимо выполнить?", Icons.add_task_rounded)),
+          const SizedBox(height: 15),
+          ListTile(
+            onTap: () async {
+              final d = await showDatePicker(context: context, initialDate: date, firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 730)));
+              if (d != null) setSt(() => date = d);
+            },
+            leading: const Icon(Icons.calendar_today_rounded, color: AppColors.primary, size: 20),
+            title: Text(DateFormat('dd MMMM yyyy', 'ru').format(date), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+            subtitle: const Text("Срок выполнения", style: TextStyle(fontSize: 10)),
+            trailing: const Icon(Icons.edit_calendar_rounded, size: 18),
+          ),
+          const SizedBox(height: 35),
+          SizedBox(
+            width: double.infinity, height: 55,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+              onPressed: () {
+                if (titleCtrl.text.isNotEmpty) {
+                  context.read<TaskProvider>().createTask(gid, titleCtrl.text.trim(), date);
+                  Navigator.pop(context);
+                }
+              }, 
+              child: const Text("ДОБАВИТЬ В МАРШРУТ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900))
+            ),
+          )
+        ],
+      ),
+    )));
+  }
+
+// Метод внутри _GoalDetailsScreenState
+
+// Внутри класса _GoalDetailsScreenState в файле goal_details_screen.dart
+
+// Найти в GoalDetailsScreen метод _showEditTaskModal:
+
+void _showEditTaskModal(TaskResponse t) {
+  final tc = TextEditingController(text: t.title);
+  DateTime d = t.dueDate;
+  final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+
+  _showHiveModal(StatefulBuilder(builder: (ctx, st) => Padding(
+    padding: const EdgeInsets.all(32),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text("РЕДАКТИРОВАНИЕ ШАГА", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+        const SizedBox(height: 25),
+        TextField(controller: tc, decoration: AppDecorations.smartInput("Что нужно сделать?", Icons.edit_note_rounded)),
+        const SizedBox(height: 15),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          onTap: () async {
+            final sel = await showDatePicker(
+              context: context, 
+              initialDate: d.isBefore(today) ? today : d, 
+              firstDate: today, // ЗАПРЕТ ВЫБОРА ПРОШЛОГО
+              lastDate: DateTime.now().add(const Duration(days: 730)),
+              locale: const Locale('ru'),
+            );
+            if (sel != null) st(() => d = sel);
+          },
+          leading: const Icon(Icons.calendar_month, color: AppColors.primary),
+          title: Text(DateFormat('dd MMMM yyyy', 'ru').format(d), style: const TextStyle(fontWeight: FontWeight.bold)),
+          subtitle: const Text("Нажмите, чтобы изменить дату"),
+        ),
+        const SizedBox(height: 35),
+        SizedBox(
+          width: double.infinity,
+          height: 55,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
+            onPressed: () async {
+              if (tc.text.isNotEmpty) {
+                // Если пользователь каким-то образом выбрал старую дату, блокируем тут
+                if (d.isBefore(today)) {
+                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Выберите будущую дату")));
+                   return;
+                }
+
+                await context.read<TaskProvider>().updateTask(
+                  taskId: t.id, 
+                  goalId: t.goalId, 
+                  newTitle: tc.text.trim(), 
+                  newDate: d,
+                  goalProv: context.read<GoalProvider>(),
+                );
+                Navigator.pop(context);
+              }
+            }, 
+            child: const Text("СОХРАНИТЬ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+          ),
+        )
+      ],
+    ),
+  )));
+}
+
+  void _confirmDeleteTask(TaskResponse t) {
+    _showHiveModal(Padding(
+      padding: const EdgeInsets.all(35),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.delete_sweep_rounded, color: Colors.redAccent, size: 45),
+          const SizedBox(height: 15),
+          const Text("УДАЛИТЬ ЭТОТ ШАГ?", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 17)),
+          const Text("Все связанные с ним комментарии также будут стерты.", textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Colors.grey)),
+          const SizedBox(height: 30),
+          Row(
+            children: [
+              Expanded(child: TextButton(onPressed: () => Navigator.pop(context), child: const Text("ОТМЕНА"))),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                  onPressed: () {
+                    context.read<TaskProvider>().deleteTask(t.id, t.goalId);
+                    Navigator.pop(context);
+                  }, 
+                  child: const Text("УДАЛИТЬ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+                ),
+              ),
+            ],
+          )
+        ],
+      ),
+    ));
+  }
+
+  void _showAddMaterialModal(int goalId) {
+    final tCtrl = TextEditingController();
+    final lCtrl = TextEditingController();
+    int? selectedTaskId;
+
+    _showHiveModal(StatefulBuilder(builder: (ctx, setSt) => Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text("НОВЫЙ МАТЕРИАЛ", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy)),
+          const SizedBox(height: 25),
+          TextField(controller: tCtrl, decoration: AppDecorations.smartInput("Заголовок ссылки или файла", Icons.title_rounded)),
+          const SizedBox(height: 15),
+          TextField(controller: lCtrl, decoration: AppDecorations.smartInput("URL-адрес ресурса", Icons.link_rounded)),
+          const SizedBox(height: 20),
+          const Align(alignment: Alignment.centerLeft, child: Text("ПРИВЯЗАТЬ К КОНКРЕТНОМУ ШАГУ:", style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: Colors.grey))),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<int>(
+            decoration: AppDecorations.smartInput("Выберите этап маршрута", Icons.layers_rounded),
+            items: context.read<TaskProvider>().tasks.map((t) => DropdownMenuItem(value: t.id, child: Text(t.title, style: const TextStyle(fontSize: 11), overflow: TextOverflow.ellipsis))).toList(),
+            onChanged: (v) => setSt(() => selectedTaskId = v),
+          ),
+          const SizedBox(height: 35),
+          SizedBox(
+            width: double.infinity, height: 55,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+              onPressed: () {
+                if (tCtrl.text.isNotEmpty && lCtrl.text.isNotEmpty) {
+                  context.read<GoalProvider>().addMaterialWithTask(goalId, tCtrl.text.trim(), lCtrl.text.trim(), "Link", selectedTaskId);
+                  Navigator.pop(context);
+                }
+              }, 
+              child: const Text("СОХРАНИТЬ В БАЗУ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900))
+            ),
+          )
+        ],
+      ),
+    )));
+  }
+
+  void _showInvitePartnerModal(GoalResponse goal) {
+    final userProv = context.read<UserProvider>();
+    userProv.loadFriends();
+    _showHiveModal(Padding(
+      padding: const EdgeInsets.all(30),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text("ПРИГЛАСИТЬ В КОМАНДУ", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 300,
+            child: Consumer<UserProvider>(
+              builder: (ctx, prov, _) => prov.friends.isEmpty 
+              ? const Center(child: Text("Сначала добавьте друзей в профиле"))
+              : ListView.builder(
+                  itemCount: prov.friends.length,
+                  itemBuilder: (c, i) {
+                    final f = prov.friends[i];
+                    bool isAlreadyMember = goal.collaborators.any((c) => c.id == f.id);
+                    return ListTile(
+                      leading: _userAvatar(f.avatarUrl, f.username, radius: 18),
+                      title: Text(f.username, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      trailing: TextButton(
+                        onPressed: isAlreadyMember ? null : () {
+                          context.read<GoalProvider>().invitePartner(goal.id, f.id, goal.userId);
+                          Navigator.pop(context);
+                        }, 
+                        child: Text(isAlreadyMember ? "В ПУТИ" : "ПОЗВАТЬ", style: TextStyle(color: isAlreadyMember ? Colors.grey : AppColors.primary, fontWeight: FontWeight.bold))
+                      ),
+                    );
+                  },
+                ),
+            ),
           ),
         ],
       ),
-      trailing: IconButton(
-        icon: Icon(Icons.delete_outline, size: 20, color: Colors.red.shade400),
-        onPressed: () => context.read<GoalProvider>().deleteMaterial(goal.id, material.id),
-      ),
-      onTap: () {
-        // Открыть материал
-        if (material.type == "Link" && material.content.isNotEmpty) {
-          // Используйте url_launcher для открытия ссылки
-        }
-      },
-    ),
-  );
-}
-
-
-  // --- 1. НАСТРОЙКИ ЦЕЛИ ---
-  void _showGoalSettings(GoalResponse goal) {
-  final titleCtrl = TextEditingController(text: goal.title);
-  bool isSolo = goal.isSolo;
-
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-    ),
-    builder: (ctx) => StatefulBuilder(
-      builder: (ctx, setSt) => Container(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-          top: 20,
-          left: 20,
-          right: 20,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              "РЕДАКТИРОВАНИЕ ЦЕЛИ",
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-            ),
-            const SizedBox(height: 20),
-            TextField(
-              controller: titleCtrl,
-              decoration: InputDecoration(
-                labelText: "Название цели",
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                filled: true,
-                fillColor: Colors.grey.shade50,
-              ),
-            ),
-            const SizedBox(height: 12),
-            SwitchListTile(
-              title: const Text("Личная цель"),
-              subtitle: Text(isSolo ? "Только вы работаете над целью" : "Групповая цель"),
-              value: isSolo,
-              onChanged: (v) => setSt(() => isSolo = v),
-              activeColor: AppColors.primary,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 55),
-                backgroundColor: AppColors.navy,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              ),
-              onPressed: () async {
-                // Сохраняем изменения
-                await context.read<GoalProvider>().updateGoal(
-                  goalId: goal.id,
-                  title: titleCtrl.text,
-                  isSolo: isSolo,
-                );
-                Navigator.pop(ctx);
-              },
-              child: const Text("СОХРАНИТЬ", style: TextStyle(fontWeight: FontWeight.w600)),
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-
-  // --- 2. ДОБАВЛЕНИЕ МАТЕРИАЛА С ПРИВЯЗКОЙ К ШАГУ ---
-  void _showAddMaterialSheet(int goalId) {
-    final titleCtrl = TextEditingController();
-    final urlCtrl = TextEditingController();
-    int? selectedTaskId;
-    
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSt) => Container(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-            top: 20,
-            left: 20,
-            right: 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                "ПРИКРЕПИТЬ МАТЕРИАЛ",
-                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-              ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: titleCtrl,
-                decoration: InputDecoration(
-                  labelText: "Название",
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  filled: true,
-                  fillColor: Colors.grey.shade50,
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: urlCtrl,
-                decoration: InputDecoration(
-                  labelText: "Ссылка",
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  filled: true,
-                  fillColor: Colors.grey.shade50,
-                ),
-              ),
-              const SizedBox(height: 15),
-               DropdownButtonFormField<int>(
-              isExpanded: true, // 👈 ДОБАВЬТЕ ЭТУ СТРОКУ
-              decoration: InputDecoration(
-                labelText: "Привязать к шагу",
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                filled: true,
-                fillColor: Colors.grey.shade50,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), // 👈 ДОБАВЬТЕ ЭТУ СТРОКУ
-              ),
-              items: [
-                const DropdownMenuItem<int>(
-                  value: null,
-                  child: Text("Без привязки", overflow: TextOverflow.ellipsis), // 👈 Добавьте overflow
-                ),
-                ...context.read<TaskProvider>().tasks.map(
-                  (t) => DropdownMenuItem(
-                    value: t.id,
-                    child: Text(t.title, overflow: TextOverflow.ellipsis), // 👈 Добавьте overflow
-                  ),
-                ),
-              ],
-              onChanged: (v) => setSt(() => selectedTaskId = v),
-            ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 55),
-                  backgroundColor: AppColors.navy,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-                onPressed: () async {
-                  await context.read<GoalProvider>().addMaterialWithTask(
-                    goalId,
-                    titleCtrl.text,
-                    urlCtrl.text,
-                    "Link",
-                    selectedTaskId,
-                  );
-                  Navigator.pop(ctx);
-                },
-                child: const Text("СОХРАНИТЬ", style: TextStyle(fontWeight: FontWeight.w600)),
-              ),
-              const SizedBox(height: 16),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // --- 3. РЕДАКТИРОВАНИЕ ШАГА К ЦЕЛИ ---
-  void _showEditTaskDialog(TaskResponse t) {
-    final titleCtrl = TextEditingController(text: t.title);
-    DateTime dueDate = t.dueDate;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text("Редактировать шаг", style: TextStyle(fontWeight: FontWeight.w700)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: titleCtrl,
-                decoration: InputDecoration(
-                  labelText: "Название",
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-              const SizedBox(height: 15),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                tileColor: Colors.grey.shade50,
-                title: Text(
-                  "Дата: ${DateFormat('dd.MM.yyyy').format(dueDate)}",
-                  style: const TextStyle(fontSize: 14),
-                ),
-                trailing: const Icon(Icons.calendar_today),
-                onTap: () async {
-                  final d = await showDatePicker(
-                    context: context,
-                    initialDate: dueDate,
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime(2030),
-                    builder: (context, child) {
-                      return Theme(
-                        data: Theme.of(context).copyWith(
-                          colorScheme: const ColorScheme.light(
-                            primary: AppColors.navy,
-                          ),
-                        ),
-                        child: child!,
-                      );
-                    },
-                  );
-                  if (d != null) {
-                    setDialogState(() {
-                      dueDate = d;
-                    });
-                  }
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text("Отмена"),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.navy,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: () {
-                context.read<TaskProvider>().updateTask(
-                  taskId: t.id,
-                  goalId: t.goalId,
-                  newTitle: titleCtrl.text,
-                  newDate: dueDate,
-                );
-                Navigator.pop(ctx);
-              },
-              child: const Text("Сохранить"),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-Future<void> _deleteTask(TaskResponse t, GoalResponse goal) async {
-  final confirm = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: const Text("Удалить шаг?"),
-      content: Text("Вы уверены, что хотите удалить \"${t.title}\"?"),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text("Отмена"),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.red,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-          onPressed: () => Navigator.pop(ctx, true),
-          child: const Text("Удалить"),
-        ),
-      ],
-    ),
-  );
-  
-  if (confirm == true) {
-    // Используем TaskProvider вместо TaskService напрямую
-    await context.read<TaskProvider>().deleteTask(t.id, t.goalId);
-  }
-}
-
-  // --- 1. ДИАЛОГ ДОБАВЛЕНИЯ ШАГА ---
-  void _showAddStepSheet(int goalId) {
-    final stepCtrl = TextEditingController();
-    DateTime selectedDate = DateTime.now().add(const Duration(days: 1));
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSt) => Container(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-            top: 20,
-            left: 20,
-            right: 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                "НОВЫЙ ШАГ ПЛАНА",
-                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-              ),
-              const SizedBox(height: 15),
-              TextField(
-                controller: stepCtrl,
-                decoration: InputDecoration(
-                  labelText: "Что нужно сделать?",
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  filled: true,
-                  fillColor: Colors.grey.shade50,
-                ),
-              ),
-              const SizedBox(height: 12),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                tileColor: Colors.grey.shade50,
-                title: Text(
-                  "Дедлайн: ${DateFormat('dd.MM.yyyy').format(selectedDate)}",
-                  style: const TextStyle(fontSize: 14),
-                ),
-                trailing: const Icon(Icons.calendar_month),
-                onTap: () async {
-                  final d = await showDatePicker(
-                    context: context,
-                    initialDate: selectedDate,
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime(2030),
-                    builder: (context, child) {
-                      return Theme(
-                        data: Theme.of(context).copyWith(
-                          colorScheme: const ColorScheme.light(
-                            primary: AppColors.navy,
-                          ),
-                        ),
-                        child: child!,
-                      );
-                    },
-                  );
-                  if (d != null) setSt(() => selectedDate = d);
-                },
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 55),
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-                onPressed: () async {
-                  if (stepCtrl.text.isEmpty) return;
-                  await context.read<TaskProvider>().createTask(
-                    goalId,
-                    stepCtrl.text,
-                    selectedDate,
-                    (p) => context.read<GoalProvider>().syncProgress(goalId, p),
-                  );
-                  Navigator.pop(ctx);
-                },
-                child: const Text("СОЗДАТЬ ШАГ", style: TextStyle(fontWeight: FontWeight.w600)),
-              ),
-              const SizedBox(height: 16),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // --- 2. ОКНО КОММЕНТАРИЯ К ЗАДАЧЕ (ДЕТАЛИЗАЦИЯ) ---
-  void _showCommentDialog(TaskResponse t) {
-    final ctrl = TextEditingController(text: t.studentComment ?? "");
-    
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                "РЕЗУЛЬТАТ ВЫПОЛНЕНИЯ",
-                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-              ),
-              const SizedBox(height: 15),
-              TextField(
-                controller: ctrl,
-                maxLines: 4,
-                decoration: InputDecoration(
-                  hintText: "Добавьте комментарий к задаче...",
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  filled: true,
-                  fillColor: Colors.grey.shade50,
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text("ОТМЕНА"),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.navy,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    onPressed: () async {
-                      await context.read<TaskProvider>().submitTask(
-                        taskId: t.id,
-                        goalId: t.goalId,
-                        resultComment: ctrl.text,
-                      );
-                      Navigator.pop(ctx);
-                    },
-                    child: const Text("СОХРАНИТЬ"),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    ));
   }
 }

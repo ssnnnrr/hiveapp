@@ -5,7 +5,6 @@ import 'package:hive_app/services/task_service.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
-
 // Импорты твоих провайдеров
 import 'providers/auth_provider.dart';
 import 'providers/goal_provider.dart';
@@ -55,23 +54,23 @@ class HiveApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-  debugShowCheckedModeBanner: false,
-  title: 'HIVE',
-  // --- ДОБАВЬ ЭТИ СТРОКИ ---
-  localizationsDelegates: const [
-    GlobalMaterialLocalizations.delegate,
-    GlobalWidgetsLocalizations.delegate,
-    GlobalCupertinoLocalizations.delegate,
-  ],
-    supportedLocales: const [
-      Locale('ru', 'RU'), // Устанавливаем русский язык как основной
-    ],
-    locale: const Locale('ru', 'RU'), 
-    // -------------------------
-    theme: ThemeData(
-      useMaterial3: true, // Включаем современный стиль Material 3
-      colorSchemeSeed: AppColors.navy,
-    ),
+      debugShowCheckedModeBanner: false,
+      title: 'HIVE',
+      // --- ДОБАВЬ ЭТИ СТРОКИ ---
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('ru', 'RU'), // Устанавливаем русский язык как основной
+      ],
+      locale: const Locale('ru', 'RU'),
+      // -------------------------
+      theme: ThemeData(
+        useMaterial3: true, // Включаем современный стиль Material 3
+        colorSchemeSeed: AppColors.navy,
+      ),
       home: Consumer<AuthProvider>(
         builder: (context, auth, _) =>
             auth.isAuthenticated ? const MainScreen() : const AuthScreen(),

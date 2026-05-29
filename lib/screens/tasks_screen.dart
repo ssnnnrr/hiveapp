@@ -1,559 +1,559 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../models/all_models.dart';
 import '../providers/task_provider.dart';
+import '../providers/event_provider.dart';
 import '../providers/goal_provider.dart';
+import '../providers/group_provider.dart';
+import '../providers/auth_provider.dart';
+import '../providers/notification_provider.dart';
 import '../theme/app_theme.dart';
+import 'create_event_screen.dart';
+import 'chat_screen.dart';
 
 class TasksScreen extends StatefulWidget {
-  final int? goalId;
-  
-  const TasksScreen({super.key, this.goalId});
+  const TasksScreen({super.key});
 
   @override
   State<TasksScreen> createState() => TasksScreenState();
 }
 
-class TasksScreenState extends State<TasksScreen> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class TasksScreenState extends State<TasksScreen> {
+  CalendarFormat _calendarFormat = CalendarFormat.week;
   DateTime _focusedDay = DateTime.now();
-  DateTime? _selectedDay;
+  DateTime _selectedDay = DateTime.now();
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _selectedDay = DateTime.now();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadTasks();
+      _checkAndRefresh();
     });
   }
 
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
+  void _checkAndRefresh() {
+    _refreshData();
   }
 
-    void jumpToDate(DateTime date) {
+  void _refreshData() {
+    if (!mounted) return;
+    context.read<TaskProvider>().loadAllTasks();
+    context.read<EventProvider>().loadEvents();
+    context.read<GroupProvider>().loadAllRoadmaps();
+    context.read<NotificationProvider>().loadNotifications();
+  }
+
+  void jumpToDate(DateTime date) {
     setState(() {
-      _selectedDay = date;
-      _focusedDay = date;
+      _selectedDay = DateTime(date.year, date.month, date.day);
+      _focusedDay = _selectedDay;
     });
   }
 
-  Future<void> _loadTasks() async {
-    final taskProvider = context.read<TaskProvider>();
-    if (widget.goalId != null) {
-      await taskProvider.loadTasks(widget.goalId!);
+  // --- ЛОГИКА ДЕЙСТВИЙ ---
+
+  void _handleTaskCheckbox(TaskResponse t, String myName, String? myAvatar, bool isCurrentlyDone) {
+    if (t.status == "UnderReview") return; // Если на проверке - ничего не делаем
+
+    // Если задание требует артефакт (файл/ссылку) и оно еще не сделано
+    // ПРИМЕЧАНИЕ: В TaskResponse нужно поле isArtifactRequired (из C# CreateTaskRequest)
+    // Если его нет в модели - замените на логику вашей модели
+    bool needsFile = t.artifactUrl != null || t.status == "UnderReview"; 
+
+    if (needsFile && !isCurrentlyDone) {
+      _showGeneralTaskSubmissionDialog(t);
     } else {
-      // Загружаем все задачи пользователя
-      final goalProvider = context.read<GoalProvider>();
-      final goals = goalProvider.goals;
-      for (var goal in goals) {
-        await taskProvider.loadTasks(goal.id);
+      context.read<TaskProvider>().updateTaskStatus(
+        taskId: t.id, 
+        newStatus: isCurrentlyDone ? "ToDo" : "Done", 
+        userName: myName, 
+        userAvatar: myAvatar, 
+        goalProvider: context.read<GoalProvider>(), 
+        comment: null
+      );
+      
+      // Удаляем уведомление о просрочке при выполнении
+      if (!isCurrentlyDone) {
+        context.read<NotificationProvider>().removeOverdueNotification(t.id, "task");
       }
     }
   }
 
+  void _handlePartnerTaskAction(RoadmapStepDto task) {
+    if (task.status == "Done") return;
 
-    List<TaskResponse> _getFilteredTasks(List<TaskResponse> tasks) {
-    return tasks.where((t) => isSameDay(t.dueDate, _selectedDay)).toList();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final taskProvider = context.watch<TaskProvider>();
-    final tasks = _getFilteredTasks(taskProvider.tasks);
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Задачи"),
-        actions: [
-          // Кнопка "Сегодня"
-          IconButton(
-            icon: const Icon(Icons.today),
-            onPressed: () => setState(() {
-              _selectedDay = DateTime.now();
-              _focusedDay = DateTime.now();
-            }),
-          )
-        ],
-      ),
-      body: Column(
-        children: [
-          TableCalendar(
-            locale: 'ru_RU',
-            firstDay: DateTime.utc(2023, 1),
-            lastDay: DateTime.utc(2030, 12),
-            focusedDay: _focusedDay,
-            calendarFormat: CalendarFormat.week, // Компактный вид
-            selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-            onDaySelected: (selectedDay, focusedDay) {
-              setState(() {
-                _selectedDay = selectedDay;
-                _focusedDay = focusedDay;
-              });
-            },
-          ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: tasks.length,
-              itemBuilder: (ctx, i) => _buildTaskCard(tasks[i]),
-            ),
-          ),
-        ],
-      ),
-      // Кнопка создания задачи теперь привязана к выбранному дню
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showAddTaskDialog(_selectedDay ?? DateTime.now()),
-        child: const Icon(Icons.add),
-      ),
-    );
-  }
-
-
-
-
-  Widget _buildTaskCard(TaskResponse task) {
-    bool isOverdue = task.dueDate.isBefore(DateTime.now()) && task.status != "Done";
-    
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: InkWell(
-        onTap: () => _showTaskDetails(task),
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Чекбокс для выполнения
-                  GestureDetector(
-                    onTap: () => _toggleTaskStatus(task),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      width: 28,
-                      height: 28,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: task.status == "Done" ? Colors.green : Colors.grey.shade400,
-                          width: 2,
-                        ),
-                        color: task.status == "Done" ? Colors.green : Colors.transparent,
-                      ),
-                      child: task.status == "Done"
-                        ? const Icon(Icons.check, color: Colors.white, size: 18)
-                        : null,
-                    ),
-                  ),
-                   if (isOverdue)
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.date_range, size: 14),
-              label: const Text("Перенести"),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade50, foregroundColor: Colors.red),
-              onPressed: () => _rescheduleTask(task),
-            ),
-          ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          task.title,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15,
-                            decoration: task.status == "Done" ? TextDecoration.lineThrough : null,
-                            color: task.status == "Done" ? Colors.grey : AppColors.navy,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          task.goalTitle,
-                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Кнопка дополнительных действий
-                  PopupMenuButton<String>(
-                    icon: Icon(Icons.more_vert, color: Colors.grey.shade600),
-                    onSelected: (value) {
-                      switch (value) {
-                        case 'edit':
-                          _showEditTaskDialog(task);
-                          break;
-                        case 'delete':
-                          _deleteTask(task);
-                          break;
-                        case 'reschedule':
-                          _rescheduleTask(task);
-                          break;
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(value: 'edit', child: Row(
-                        children: [
-                          Icon(Icons.edit, size: 18),
-                          SizedBox(width: 8),
-                          Text('Редактировать'),
-                        ],
-                      )),
-                      const PopupMenuItem(value: 'reschedule', child: Row(
-                        children: [
-                          Icon(Icons.schedule, size: 18),
-                          SizedBox(width: 8),
-                          Text('Перенести'),
-                        ],
-                      )),
-                      const PopupMenuItem(value: 'delete', child: Row(
-                        children: [
-                          Icon(Icons.delete, size: 18, color: Colors.red),
-                          SizedBox(width: 8),
-                          Text('Удалить', style: TextStyle(color: Colors.red)),
-                        ],
-                      )),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  // Дата выполнения
-                  Icon(Icons.calendar_today, size: 14, color: Colors.grey.shade500),
-                  const SizedBox(width: 4),
-                  Text(
-                    DateFormat('dd.MM.yyyy').format(task.dueDate),
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                  ),
-                  const Spacer(),
-                  // Статус
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: task.status == "Done" 
-                        ? Colors.green.withOpacity(0.1) 
-                        : Colors.orange.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      task.status == "Done" ? "Выполнено" : "В процессе",
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: task.status == "Done" ? Colors.green : Colors.orange,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              // Комментарии и инициалы пользователей
-              if (task.completions.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const Icon(Icons.people, size: 14, color: Colors.grey),
-                    const SizedBox(width: 4),
-                    ...task.completions.map((initial) => Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: CircleAvatar(
-                        radius: 10,
-                        backgroundColor: AppColors.primary.withOpacity(0.1),
-                        child: Text(
-                          initial,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ),
-                    )),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _toggleTaskStatus(TaskResponse task) async {
-    final newStatus = task.status == "Done" ? "ToDo" : "Done";
-    await context.read<TaskProvider>().updateTaskStatus(
-      task.id, 
-      newStatus, 
-      task.studentComment
-    );
-  }
-
-  void _rescheduleTask(TaskResponse task) async {
-    DateTime selectedDate = task.dueDate;
-    
-    final date = await showDatePicker(
-      context: context,
-      initialDate: selectedDate,
-      firstDate: DateTime.now(),
-      lastDate: DateTime(2030),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(primary: AppColors.navy),
-          ),
-          child: child!,
-        );
-      },
-    );
-    
-    if (date != null) {
-      await context.read<TaskProvider>().updateTask(
-        taskId: task.id,
-        goalId: task.goalId,
-        newTitle: task.title,
-        newDate: date,
-      );
+    if (task.isTest) {
+      _showTestActionDialog(task);
+    } else if (task.isRequired) {
+      // Если ТРЕБУЕТСЯ отчет - открываем диалог с кнопками ССЫЛКА/ФАЙЛ
+      _showArtifactSubmissionDialog(task);
+    } else {
+      // Простая задача без отчета - завершаем
+      _markPartnerTaskAsDone(task);
     }
   }
 
-  void _showEditTaskDialog(TaskResponse task) {
-    final titleCtrl = TextEditingController(text: task.title);
-    DateTime dueDate = task.dueDate;
-
+  void _showGeneralTaskSubmissionDialog(TaskResponse t) {
     showDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text("Редактировать задачу", style: TextStyle(fontWeight: FontWeight.w700)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: titleCtrl,
-                decoration: InputDecoration(
-                  labelText: "Название",
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-              const SizedBox(height: 15),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                tileColor: Colors.grey.shade50,
-                title: Text(
-                  "Дата: ${DateFormat('dd.MM.yyyy').format(dueDate)}",
-                  style: const TextStyle(fontSize: 14),
-                ),
-                trailing: const Icon(Icons.calendar_today),
-                onTap: () async {
-                  final d = await showDatePicker(
-                    context: context,
-                    initialDate: dueDate,
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime(2030),
-                    builder: (context, child) {
-                      return Theme(
-                        data: Theme.of(context).copyWith(
-                          colorScheme: const ColorScheme.light(primary: AppColors.navy),
-                        ),
-                        child: child!,
-                      );
-                    },
-                  );
-                  if (d != null) {
-                    setDialogState(() {
-                      dueDate = d;
-                    });
-                  }
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text("Отмена"),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.navy,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: () {
-                context.read<TaskProvider>().updateTask(
-                  taskId: task.id,
-                  goalId: task.goalId,
-                  newTitle: titleCtrl.text,
-                  newDate: dueDate,
-                );
-                Navigator.pop(ctx);
-              },
-              child: const Text("Сохранить"),
-            ),
-          ],
-        ),
+      builder: (ctx) => AlertDialog(
+        title: const Text("Требуется подтверждение"),
+        content: Text("Для задачи '${t.title}' необходимо прикрепить результат (ссылку или файл) в деталях цели."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("ОК")),
+        ],
       ),
     );
   }
 
-  void _deleteTask(TaskResponse task) async {
-    final confirm = await showDialog<bool>(
+  void _showTestActionDialog(RoadmapStepDto task) {
+    showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text("Удалить задачу?"),
-        content: Text("Вы уверены, что хотите удалить \"${task.title}\"?"),
+        title: const Row(children: [Icon(Icons.quiz, color: Colors.purple), SizedBox(width: 10), Text("ТЕСТ")]),
+        content: Text("Пройти тест: ${task.content}?\nВас перенаправит в учебный чат."),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Отмена"),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("ОТМЕНА")),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Удалить"),
+            onPressed: () { Navigator.pop(ctx); _navigateToChat(task); },
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy),
+            child: const Text("В ЧАТ"),
           ),
         ],
       ),
     );
-    
-    if (confirm == true) {
-      await context.read<TaskProvider>().deleteTask(task.id, task.goalId);
-    }
   }
 
-  void _showTaskDetails(TaskResponse task) {
-    showModalBottomSheet(
+  void _showArtifactSubmissionDialog(RoadmapStepDto task) {
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-      ),
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.all(24),
-        child: Column(
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text("Сдать работу"),
+        content: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
+            Text(task.content),
             const SizedBox(height: 20),
-            Text(
-              task.title,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            _buildDetailRow(Icons.flag, "Цель", task.goalTitle),
-            _buildDetailRow(Icons.calendar_today, "Срок", DateFormat('dd.MM.yyyy').format(task.dueDate)),
-            _buildDetailRow(
-              Icons.check_circle,
-              "Статус",
-              task.status == "Done" ? "Выполнено" : "В процессе",
-            ),
-            if (task.studentComment != null && task.studentComment!.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              const Text("Комментарий:", style: TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(task.studentComment!),
-              ),
-            ],
-            if (task.completions.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              const Text("Выполнили:", style: TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: task.completions.map((initial) => Chip(
-                  avatar: CircleAvatar(
-                    backgroundColor: AppColors.primary.withOpacity(0.1),
-                    child: Text(initial, style: const TextStyle(color: AppColors.primary)),
-                  ),
-                  label: Text(initial),
-                )).toList(),
-              ),
-            ],
-            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(child: OutlinedButton(onPressed: () { Navigator.pop(ctx); _showSubmitLinkDialog(task); }, child: const Text("ССЫЛКА"))),
+                const SizedBox(width: 10),
+                Expanded(child: ElevatedButton(onPressed: () { Navigator.pop(ctx); _submitFile(task); }, child: const Text("ФАЙЛ"))),
+              ],
+            )
           ],
         ),
       ),
     );
   }
 
-  Widget _buildDetailRow(IconData icon, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: Colors.grey.shade600),
-          const SizedBox(width: 8),
-          Text("$label: ", style: TextStyle(color: Colors.grey.shade600)),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
+  void _showSubmitLinkDialog(RoadmapStepDto task) {
+    final linkCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Вставьте ссылку"),
+        content: TextField(controller: linkCtrl, decoration: const InputDecoration(hintText: "https://...")),
+        actions: [
+          ElevatedButton(onPressed: () async {
+            if (linkCtrl.text.isNotEmpty) {
+              await context.read<GroupProvider>().submitStepResult(task.id, linkCtrl.text, "Сдано через главное меню", task.groupId);
+              context.read<NotificationProvider>().removeOverdueNotification(task.id, "roadmap");
+              Navigator.pop(ctx);
+              _refreshData();
+            }
+          }, child: const Text("ОТПРАВИТЬ"))
         ],
       ),
     );
   }
 
-  void _showAddTaskDialog(DateTime date) {
-    // Используем дату из календаря
-    final titleCtrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text("Задача на ${DateFormat('dd.MM').format(date)}"),
-        content: TextField(controller: titleCtrl),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text("Отмена")),
-          ElevatedButton(
-            onPressed: () {
-              context.read<TaskProvider>().createTask(widget.goalId!, titleCtrl.text, date, (p){});
-              Navigator.pop(context);
-            },
-            child: Text("Создать"),
-          )
+  Future<void> _submitFile(RoadmapStepDto task) async {
+    await context.read<GroupProvider>().uploadArtifact(task.id, task.groupId);
+    context.read<NotificationProvider>().removeOverdueNotification(task.id, "roadmap");
+    _refreshData();
+  }
+
+  Future<void> _markPartnerTaskAsDone(RoadmapStepDto task) async {
+    await context.read<GroupProvider>().submitStepResult(task.id, "", "Завершено", task.groupId);
+    context.read<NotificationProvider>().removeOverdueNotification(task.id, "roadmap");
+    _refreshData();
+  }
+
+  void _navigateToChat(RoadmapStepDto task) {
+    final groupProv = context.read<GroupProvider>();
+    final group = groupProv.groups.firstWhere((g) => g.id == task.groupId, orElse: () => groupProv.groups.first);
+    Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(group: group))).then((_) => _refreshData());
+  }
+
+  void _openCreateEvent({EventResponse? event}) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => CreateEventScreen(initialDate: _selectedDay, event: event))).then((_) => _refreshData());
+  }
+
+  // --- ВЕРСТКА ---
+
+  @override
+  Widget build(BuildContext context) {
+    final eventProv = context.watch<EventProvider>();
+    final taskProv = context.watch<TaskProvider>();
+    final groupProv = context.watch<GroupProvider>();
+    final auth = context.read<AuthProvider>();
+    
+    final myName = auth.user?.username ?? "";
+    final myId = auth.user?.id ?? 0;
+    final myAvatar = auth.user?.avatarUrl;
+
+    final dailyEvents = eventProv.events.where((e) => isSameDay(e.eventDate.toLocal(), _selectedDay)).toList();
+    final dailyTasks = taskProv.tasks.where((t) => isSameDay(t.dueDate.toLocal(), _selectedDay)).toList();
+    final partnerTasks = groupProv.allRoadmapSteps.where((s) => isSameDay(s.dueDate.toLocal(), _selectedDay) && s.creatorId != myId).toList();
+
+    bool isWeb = MediaQuery.of(context).size.width > 1000;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: Column(
+        children: [
+          _buildCalendarHeader(),
+          _buildCalendarSection(eventProv.events, taskProv.tasks, groupProv.allRoadmapSteps),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: ListView(
+                    padding: EdgeInsets.symmetric(horizontal: isWeb ? 40 : 20, vertical: 25),
+                    children: [
+                      if (dailyEvents.isNotEmpty) ...[
+                        _buildBlockHeader(Icons.calendar_month, "СОБЫТИЯ ДНЯ"),
+                        ...dailyEvents.map((e) => _buildEventCard(e)),
+                      ],
+                      if (dailyTasks.isNotEmpty) ...[
+                        _buildBlockHeader(Icons.rocket_launch, "ШАГИ К ЦЕЛЯМ"),
+                        ...dailyTasks.map((t) => _buildEnhancedTaskCard(t, myName, myAvatar, myId)),
+                      ],
+                      if (partnerTasks.isNotEmpty) ...[
+                        _buildBlockHeader(Icons.people_alt, "ЗАДАНИЯ ИЗ ЧАТОВ", color: Colors.purple),
+                        ...partnerTasks.map((s) => _buildEnhancedPartnerCard(s)),
+                      ],
+                      if (dailyEvents.isEmpty && dailyTasks.isEmpty && partnerTasks.isEmpty) _buildEmptyState(),
+                      const SizedBox(height: 100),
+                    ],
+                  ),
+                ),
+                if (isWeb) _buildWebSidebar(taskProv.tasks, eventProv.events, myName),
+              ],
+            ),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openCreateEvent(),
+        backgroundColor: AppColors.navy,
+        icon: const Icon(Icons.add, color: Colors.white),
+        label: const Text("СОБЫТИЕ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+      ),
+    );
+  }
+
+  // --- КАРТОЧКИ ---
+
+  Widget _buildEnhancedTaskCard(TaskResponse t, String myName, String? myAvatar, int myId) {
+    bool isDone = t.status == "Done" || t.completions.any((c) => c.username == myName);
+    final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+    bool isOverdue = t.dueDate.toLocal().isBefore(today) && !isDone;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 15),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: isOverdue ? Colors.redAccent.withOpacity(0.4) : const Color(0xFFF1F5F9), width: isOverdue ? 2 : 1),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10)],
+          ),
+          child: Column(
+            children: [
+              ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                leading: Checkbox(
+                  value: isDone, activeColor: Colors.green,
+                  onChanged: (v) => _handleTaskCheckbox(t, myName, myAvatar, isDone),
+                ),
+                title: Text(t.title, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, decoration: isDone ? TextDecoration.lineThrough : null, color: isDone ? Colors.grey : AppColors.navy)),
+                subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text("ЦЕЛЬ: ${t.goalTitle.toUpperCase()}", style: const TextStyle(fontSize: 9, color: AppColors.primary, fontWeight: FontWeight.w900)),
+                  if (isOverdue) 
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: InkWell(
+                        onTap: () => _rescheduleGeneral(t.id, 'task'),
+                        child: const Text("ПРОПУЩЕНО. ПЕРЕНЕСТИ?", style: TextStyle(color: Colors.red, fontSize: 10, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  _buildCompletionRow(t),
+                ]),
+                trailing: _buildActionsMenu(t.id, 'task', t),
+              ),
+              _buildComments(t, myId),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEnhancedPartnerCard(RoadmapStepDto s) {
+    bool isDone = s.status == "Done";
+    bool isReview = s.status == "UnderReview";
+    final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+    bool isOverdue = s.dueDate.toLocal().isBefore(today) && !isDone && !isReview;
+
+    Color cardColor = s.isTest ? Colors.purple : AppColors.primary;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: isOverdue ? Colors.red.withOpacity(0.3) : cardColor.withOpacity(0.1), width: 1.5),
+        boxShadow: [BoxShadow(color: cardColor.withOpacity(0.03), blurRadius: 10)],
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            contentPadding: const EdgeInsets.all(15),
+            leading: isReview 
+              ? const Icon(Icons.hourglass_bottom, color: Colors.orange)
+              : IconButton(
+                  icon: Icon(isDone ? Icons.check_circle : Icons.circle_outlined, color: isDone ? Colors.green : Colors.grey),
+                  onPressed: () => _handlePartnerTaskAction(s),
+                ),
+            title: Text(s.content, style: TextStyle(fontWeight: FontWeight.w800, decoration: isDone ? TextDecoration.lineThrough : null, color: isDone ? Colors.grey : AppColors.navy)),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 5),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("НАЗНАЧИЛ: ${s.creatorName ?? 'Учитель'}", style: TextStyle(fontSize: 10, color: cardColor, fontWeight: FontWeight.bold)),
+                  if (isReview) const Text("Ждет проверки учителем", style: TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.bold)),
+                  if (isOverdue) const Text("ЗАДАНИЕ ПРОСРОЧЕНО", style: TextStyle(color: Colors.red, fontSize: 10, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            trailing: !isDone ? _buildTinyActionButton(s) : const Icon(Icons.verified, color: Colors.green),
+          ),
+          _buildTinyResources(s),
         ],
       ),
     );
+  }
+
+  Widget _buildTinyActionButton(RoadmapStepDto s) {
+    if (s.isTest) return const Icon(Icons.quiz, color: Colors.purple, size: 20);
+    if (s.isRequired) return const Icon(Icons.upload_file, color: Colors.blue, size: 20);
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildTinyResources(RoadmapStepDto s) {
+    if (s.instructionUrl == null && s.artifactUrl == null) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: const BorderRadius.vertical(bottom: Radius.circular(22))),
+      child: Row(
+        children: [
+          if (s.instructionUrl != null) const Row(children: [Icon(Icons.menu_book, size: 12, color: Colors.blue), SizedBox(width: 4), Text("Материал", style: TextStyle(fontSize: 10))]),
+          const SizedBox(width: 15),
+          if (s.artifactUrl != null) const Row(children: [Icon(Icons.description, size: 12, color: Colors.green), SizedBox(width: 4), Text("Отчет сдан", style: TextStyle(fontSize: 10))]),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEventCard(EventResponse e) {
+    DateTime localTime = e.eventDate.toLocal();
+    bool isOverdue = localTime.isBefore(DateTime.now()) && !e.isCompleted;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 15),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: isOverdue ? Colors.redAccent.withOpacity(0.3) : Colors.transparent, width: 2),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 75, height: 80,
+                decoration: BoxDecoration(color: isOverdue ? Colors.red.withOpacity(0.05) : const Color(0xFFF8FAFC), borderRadius: const BorderRadius.horizontal(left: Radius.circular(18))),
+                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Text(DateFormat('HH:mm').format(localTime), style: TextStyle(fontWeight: FontWeight.bold, color: isOverdue ? Colors.red : AppColors.navy)),
+                  Checkbox(value: e.isCompleted, activeColor: Colors.green, onChanged: (v) => context.read<EventProvider>().toggleEvent(e.id)),
+                ]),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(15),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(e.title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, decoration: e.isCompleted ? TextDecoration.lineThrough : null)),
+                  ]),
+                ),
+              ),
+              if (e.imageUrl != null) 
+                ClipRRect(
+                  borderRadius: const BorderRadius.only(topRight: Radius.circular(18), bottomRight: Radius.circular(18)),
+                  child: Image.memory(base64Decode(e.imageUrl!), width: 90, height: 80, fit: BoxFit.cover)
+                ),
+              _buildActionsMenu(e.id, 'event', e),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildComments(TaskResponse t, int myId) {
+    final ctrl = TextEditingController();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 15),
+      child: Column(children: [
+        if (t.comments.isNotEmpty) ...[
+          const Divider(),
+          ...t.comments.map((c) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(children: [
+              Expanded(child: Text.rich(TextSpan(children: [
+                TextSpan(text: "${c.userName}: ", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: AppColors.navy)),
+                TextSpan(text: c.text, style: const TextStyle(fontSize: 11)),
+              ]))),
+              if (c.userId == myId) 
+                IconButton(onPressed: () => context.read<TaskProvider>().deleteComment(t.id, c.id), icon: const Icon(Icons.close, size: 12, color: Colors.grey), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+            ]),
+          )),
+        ],
+        const SizedBox(height: 8),
+        TextField(
+          controller: ctrl,
+          style: const TextStyle(fontSize: 12),
+          decoration: InputDecoration(
+            hintText: "Комментировать...", border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+            fillColor: const Color(0xFFF8FAFC), filled: true, isDense: true,
+            suffixIcon: IconButton(icon: const Icon(Icons.send, size: 16), onPressed: () {
+              if (ctrl.text.trim().isNotEmpty) { context.read<TaskProvider>().addComment(t.id, ctrl.text.trim()); ctrl.clear(); }
+            }),
+          ),
+        )
+      ]),
+    );
+  }
+
+  // --- КАЛЕНДАРЬ И ХЕЛПЕРЫ ---
+
+  Widget _buildCalendarHeader() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(25, 20, 20, 10), color: Colors.white,
+      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Text(DateFormat('EEEE, d MMMM', 'ru').format(_selectedDay).toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w900, color: AppColors.navy, fontSize: 14)),
+        Row(children: [
+          TextButton(onPressed: () => jumpToDate(DateTime.now()), child: const Text("СЕГОДНЯ")),
+          _buildViewSwitcher(),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _buildViewSwitcher() => Container(
+    padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: const Color(0xFFF1F4F8), borderRadius: BorderRadius.circular(10)),
+    child: Row(children: [ _viewItem("НЕД", CalendarFormat.week), _viewItem("МЕС", CalendarFormat.month) ]),
+  );
+
+  Widget _viewItem(String label, CalendarFormat format) => GestureDetector(
+    onTap: () => setState(() => _calendarFormat = format),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(color: _calendarFormat == format ? Colors.white : Colors.transparent, borderRadius: BorderRadius.circular(8)),
+      child: Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: _calendarFormat == format ? AppColors.navy : Colors.grey)),
+    ),
+  );
+
+  Widget _buildCalendarSection(List<EventResponse> evs, List<TaskResponse> ts, List<RoadmapStepDto> rs) {
+    return Container(
+      color: Colors.white,
+      child: TableCalendar(
+        locale: 'ru_RU', firstDay: DateTime.now().subtract(const Duration(days: 365)), lastDay: DateTime.now().add(const Duration(days: 365)),
+        focusedDay: _focusedDay, calendarFormat: _calendarFormat, headerVisible: false, startingDayOfWeek: StartingDayOfWeek.monday,
+        selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+        onDaySelected: (sel, foc) => setState(() { _selectedDay = sel; _focusedDay = foc; }),
+        eventLoader: (day) {
+          bool hasEvent = evs.any((e) => isSameDay(e.eventDate.toLocal(), day));
+          bool hasTask = ts.any((t) => isSameDay(t.dueDate.toLocal(), day));
+          bool hasRoadmap = rs.any((s) => isSameDay(s.dueDate.toLocal(), day));
+          return (hasEvent || hasTask || hasRoadmap) ? ['dot'] : [];
+        },
+        calendarStyle: const CalendarStyle(selectedDecoration: BoxDecoration(color: AppColors.primary, shape: BoxShape.circle), markerDecoration: BoxDecoration(color: Colors.orange, shape: BoxShape.circle)),
+      ),
+    );
+  }
+
+  Widget _buildWebSidebar(List<TaskResponse> tasks, List<EventResponse> events, String myName) {
+    int done = tasks.where((t) => t.completions.any((c) => c.username == myName)).length;
+    double progress = tasks.isEmpty ? 0 : (done / tasks.length);
+    return Container(
+      width: 300, margin: const EdgeInsets.all(25), padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 20)]),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text("ПРОГРЕСС", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+        const SizedBox(height: 20),
+        _statTile("Задач", done.toString(), Colors.green),
+        _statTile("Событий", events.length.toString(), Colors.blue),
+        const SizedBox(height: 20),
+        LinearProgressIndicator(value: progress, color: AppColors.primary, backgroundColor: Colors.grey.shade100),
+      ]),
+    );
+  }
+
+  Widget _statTile(String l, String v, Color c) => Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [Icon(Icons.circle, size: 8, color: c), const SizedBox(width: 10), Text(l), const Spacer(), Text(v, style: const TextStyle(fontWeight: FontWeight.bold))]));
+
+  Widget _buildBlockHeader(IconData i, String t, {Color color = AppColors.navy}) => Padding(padding: const EdgeInsets.only(top: 25, bottom: 15), child: Row(children: [Icon(i, size: 16, color: color), const SizedBox(width: 10), Text(t, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: color, letterSpacing: 1.2))]));
+
+  Widget _buildEmptyState() => const Center(child: Padding(padding: EdgeInsets.only(top: 60), child: Text("На сегодня ничего нет", style: TextStyle(color: Colors.grey))));
+
+  bool isSameDay(DateTime? a, DateTime? b) => a?.year == b?.year && a?.month == b?.month && a?.day == b?.day;
+
+  Widget _buildCompletionRow(TaskResponse t) {
+    if (t.completions.isEmpty) return const SizedBox.shrink();
+    return Padding(padding: const EdgeInsets.only(top: 8), child: Wrap(spacing: -8, children: t.completions.map((c) => Container(decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)), child: CircleAvatar(radius: 12, backgroundImage: c.avatarUrl != null ? MemoryImage(base64Decode(c.avatarUrl!)) : null, child: c.avatarUrl == null ? Text(c.username[0], style: const TextStyle(fontSize: 10)) : null))).toList()));
+  }
+
+  Widget _buildActionsMenu(int id, String type, dynamic obj) => PopupMenuButton<String>(
+    icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
+    onSelected: (v) {
+      if (v == 'del') { type == 'task' ? context.read<TaskProvider>().deleteTask(id, obj.goalId) : context.read<EventProvider>().deleteEvent(id); }
+      if (v == 'edit') { _rescheduleGeneral(id, type); }
+    },
+    itemBuilder: (ctx) => [ const PopupMenuItem(value: 'edit', child: Text("Перенести")), const PopupMenuItem(value: 'del', child: Text("Удалить", style: TextStyle(color: Colors.red))) ],
+  );
+
+  void _rescheduleGeneral(int id, String type) async {
+    final DateTime? d = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)));
+    if (d != null) {
+      if (type == 'task') {
+        await context.read<TaskProvider>().updateTaskDate(id, d, context.read<GoalProvider>());
+      } else {
+        final ev = context.read<EventProvider>().events.firstWhere((e) => e.id == id);
+        await context.read<EventProvider>().updateEvent(id, ev.title, ev.description, d, ev.linkUrl, ev.location, ev.imageUrl);
+      }
+      _refreshData();
+    }
   }
 }

@@ -1,60 +1,80 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:hive_app/providers/event_provider.dart';
-import 'package:hive_app/providers/goal_provider.dart';
-import 'package:provider/provider.dart';
 import '../models/all_models.dart';
 import '../services/auth_service.dart';
 
 class AuthProvider extends ChangeNotifier {
-  UserDto? _user;
-  bool _isLoading = false;
-  bool _isReady = false;
-
   final AuthService _authService = AuthService();
-  final _storage = const FlutterSecureStorage();
+  
+  UserDto? _user;
+  String? _token;
+  bool _isLoading = false;
 
   UserDto? get user => _user;
+  String? get token => _token;
   bool get isLoading => _isLoading;
-  bool get isAuthenticated => _user != null && _isReady;
 
+  // ИСПРАВЛЕНИЕ: Добавляем именно этот геттер для main.dart
+  bool get isAuthenticated => _token != null;
+  
+  // Дополнительный короткий геттер для удобства
+  bool get isAuth => _token != null;
+
+  // Логин
   Future<bool> login(String email, String password) async {
     _isLoading = true;
     notifyListeners();
-    final res = await _authService.login(email, password);
-    if (res != null) {
-      _user = res.user;
-      await _storage.write(key: 'jwt_token', value: res.token);
-      _isReady = true;
-      _isLoading = false;
-      notifyListeners();
-      return true;
+
+    try {
+      final response = await _authService.login(email, password);
+      if (response != null) {
+        _token = response.token;
+        _user = response.user;
+        
+        _isLoading = false;
+        notifyListeners();
+        return true;
+      }
+    } catch (e) {
+      debugPrint("AuthProvider Login Error: $e");
     }
+
     _isLoading = false;
     notifyListeners();
     return false;
   }
 
-  Future<bool> register(String username, String email, String password) async {
+  // Регистрация
+  Future<bool> register(String name, String email, String pass) async {
     _isLoading = true;
     notifyListeners();
-    final success = await _authService.register(username, email, password);
-    _isLoading = false;
-    notifyListeners();
-    return success;
+    try {
+      bool success = await _authService.register(name, email, pass);
+      _isLoading = false;
+      notifyListeners();
+      return success;
+    } catch (e) {
+      debugPrint("AuthProvider Register Error: $e");
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
   }
 
-  void completeAuth() {
-    _isReady = true;
-    notifyListeners();
-  }
-
-  void logout(BuildContext context) async {
-    await _storage.delete(key: 'jwt_token');
+  // ВЫХОД (Логаут)
+  Future<void> logout(BuildContext context) async {
+    try {
+      await _authService.logout(); // Очистка токена в сервисе/памяти
+    } catch (e) {
+      debugPrint("Error during service logout: $e");
+    }
+    
+    _token = null;
     _user = null;
-    _isReady = false;
-    context.read<GoalProvider>().clearData();
-    context.read<EventProvider>().clearData();
+    notifyListeners(); // Сообщаем приложению, что пользователь вышел
+  }
+
+  // Завершение авторизации (если нужно просто обновить UI)
+  void completeAuth() {
     notifyListeners();
   }
 }

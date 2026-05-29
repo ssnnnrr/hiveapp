@@ -5,6 +5,7 @@ import '../models/all_models.dart';
 import '../providers/goal_provider.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/main_dashboard_layout.dart'; // ИМПОРТ
 
 class GoalPreviewScreen extends StatefulWidget {
   final String title, why, result;
@@ -33,15 +34,29 @@ class _GoalPreviewScreenState extends State<GoalPreviewScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF0F2F5),
-      appBar: AppBar(
+    double width = MediaQuery.of(context).size.width;
+    bool isWide = width > 1000;
+
+    // Внутренний контент страницы
+    Widget content = Scaffold(
+      backgroundColor: Colors.transparent, // Важно для Layout
+      appBar: isWide ? null : AppBar(
         backgroundColor: Colors.white, elevation: 0,
         leading: const BackButton(color: AppColors.navy),
-        title: const Text("Редактирование плана", style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold)),
+        title: const Text("Редактирование плана", style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold, fontSize: 16)),
       ),
       body: Column(
         children: [
+          if (isWide) 
+            Padding(
+              padding: const EdgeInsets.all(25),
+              child: Row(
+                children: [
+                  IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.arrow_back_ios_new, size: 20)),
+                  const Text("Просмотр и правка маршрута", style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: AppColors.navy)),
+                ],
+              ),
+            ),
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.all(20),
@@ -52,6 +67,12 @@ class _GoalPreviewScreenState extends State<GoalPreviewScreen> {
           _buildBottomAction(),
         ],
       ),
+    );
+
+    // Оборачиваем в Layout
+    return MainDashboardLayout(
+      selectedIndex: 1, // Секция "Цели"
+      child: content,
     );
   }
 
@@ -73,7 +94,6 @@ class _GoalPreviewScreenState extends State<GoalPreviewScreen> {
                   onChanged: (v) => _steps[index] = TaskDraftResponse(title: v, dueDate: _steps[index].dueDate),
                 ),
               ),
-              // КНОПКА УДАЛЕНИЯ ШАГА
               IconButton(
                 icon: const Icon(Icons.delete_sweep, color: Colors.redAccent),
                 onPressed: () => setState(() => _steps.removeAt(index)),

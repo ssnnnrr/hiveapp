@@ -16,11 +16,13 @@ class AuthService {
 
       if (response.statusCode == 200) {
         final authData = AuthResponse.fromJson(response.data);
+        // Сохраняем токен
         await _storage.write(key: 'jwt_token', value: authData.token);
         return authData;
       }
       return null;
     } catch (e) {
+      print("ОШИБКА LOGIN API: $e");
       return null;
     }
   }
@@ -34,8 +36,13 @@ class AuthService {
       });
       return response.statusCode == 200;
     } catch (e) {
-      print("ОШИБКА РЕГИСТРАЦИИ: $e"); // Добавь это для отладки
+      print("ОШИБКА РЕГИСТРАЦИИ: $e");
       return false;
     }
+  }
+
+  // МЕТОД ДЛЯ УДАЛЕНИЯ ТОКЕНА
+  Future<void> logout() async {
+    await _storage.delete(key: 'jwt_token');
   }
 }

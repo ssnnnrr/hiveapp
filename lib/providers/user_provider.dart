@@ -23,6 +23,16 @@ class UserProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
 
 
+Future<void> initUserData(int myId) async {
+  // Запускаем всё параллельно
+  await Future.wait([
+    loadMyProfile(myId),
+    loadFriends(),
+    loadRequests(),
+    loadAllSkills(),
+  ]);
+}
+
   Future<void> loadMyProfile(int id) async {
     _isLoading = true;
     // Используем микрозадачу, чтобы избежать ошибки markNeedsBuild
@@ -119,6 +129,18 @@ Future<void> searchPartners(int? skillId, String type, {String? query}) async {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  // Метод для полной очистки данных пользователя (при выходе)
+  void clearData() {
+    _myProfile = null;
+    _targetFullProfile = null;
+    _friends = [];
+    _pendingRequests = [];
+    _allSkills = [];
+    _searchResults = [];
+    _isLoading = false;
+    notifyListeners();
   }
 
   Future<void> saveSkills(List<int> selectedIds, String type) async {
