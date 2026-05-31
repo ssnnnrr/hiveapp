@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:hive_app/models/all_models.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/goal_provider.dart';
@@ -95,6 +96,35 @@ class _CreateGoalScreenState extends State<CreateGoalScreen> {
                       : const Text("СФОРМИРОВАТЬ ПЛАН С AI", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   ),
                 ),
+                const SizedBox(height: 15),
+SizedBox(
+  width: double.infinity, height: 50,
+  child: OutlinedButton(
+    style: OutlinedButton.styleFrom(
+      side: const BorderSide(color: AppColors.navy),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))
+    ),
+    onPressed: () {
+      if (_titleCtrl.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Укажите название цели")));
+        return;
+      }
+      Navigator.push(context, MaterialPageRoute(
+        builder: (_) => GoalPreviewScreen(
+          title: _titleCtrl.text.trim(), 
+          why: _whyCtrl.text.trim(), 
+          result: _resultCtrl.text.trim(),
+          targetDate: _selectedDate, 
+          isSolo: _isSolo, 
+          initialSteps: [ // Создаем один пустой шаг для начала
+            TaskDraftResponse(title: "Первый шаг", dueDate: DateTime.now().add(const Duration(days: 1)))
+          ],
+        )
+      ));
+    },
+    child: const Text("СОЗДАТЬ ВРУЧНУЮ (БЕЗ AI)", style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold)),
+  ),
+),
               ],
             ),
           ),

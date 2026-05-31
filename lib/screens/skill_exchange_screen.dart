@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/user_provider.dart';
-import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 import '../models/all_models.dart';
 import 'user_detail_screen.dart';
@@ -193,161 +192,142 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
     );
   }
 
-  // --- КАРТОЧКА ПОЛЬЗОВАТЕЛЯ (WEB ДИЗАЙН) ---
-  Widget _buildUserWebCard(UserDto user) {
-    bool isMatch = user.synergyLevel == "Ideal";
+Widget _buildUserWebCard(UserDto user) {
+  bool isMatch = user.synergyLevel == "Ideal";
+  // Считаем, заполнил ли пользователь навыки (проверяем списки из DTO)
+  // Примечание: на детальном экране мы увидим всё, здесь — только то, что важно для поиска
+  bool noSkillsProvided = user.matchTeaching.isEmpty && user.matchLearning.isEmpty && !isMatch;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
+  return Container(
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(24),
+      border: Border.all(
+        color: isMatch ? Colors.amber.shade300 : Colors.transparent,
+        width: 2,
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: isMatch ? Colors.amber.withOpacity(0.1) : Colors.black.withOpacity(0.04),
+          blurRadius: 20,
+          offset: const Offset(0, 10),
+        ),
+      ],
+    ),
+    child: Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => UserDetailScreen(userId: user.id)),
+        ).then((_) => _onSearch()),
         borderRadius: BorderRadius.circular(24),
-        // Если это мэтч — делаем золотую рамку
-        border: Border.all(
-          color: isMatch ? Colors.amber.shade300 : Colors.transparent,
-          width: 2,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: isMatch
-                ? Colors.amber.withValues(alpha: 0.1)
-                : Colors.black.withValues(alpha: 0.04),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => UserDetailScreen(userId: user.id),
-            ),
-          ).then((_) => _onSearch()),
-          borderRadius: BorderRadius.circular(24),
-          child: Padding(
-            padding: const EdgeInsets.all(25),
-            child: Column(
-              children: [
-                // АВАТАР И СТАТУС
-                Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    CircleAvatar(
-                      radius: 45,
-                      backgroundColor: Colors.grey.shade100,
-                      backgroundImage: user.avatarUrl != null
-                          ? MemoryImage(base64Decode(user.avatarUrl!))
-                          : null,
-                      child: user.avatarUrl == null
-                          ? const Icon(
-                              Icons.person,
-                              size: 40,
-                              color: Colors.grey,
-                            )
-                          : null,
-                    ),
-                    if (isMatch)
-                      Positioned(
-                        right: 0,
-                        bottom: 0,
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: const BoxDecoration(
-                            color: Colors.amber,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.bolt_rounded,
-                            color: Colors.white,
-                            size: 18,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 15),
-                // ИМЯ И РЕЙТИНГ
+        child: Padding(
+          padding: const EdgeInsets.all(25),
+          child: Column(
+            children: [
+              // --- Аватар ---
+              CircleAvatar(
+                radius: 45,
+                backgroundColor: Colors.grey.shade100,
+                backgroundImage: user.avatarUrl != null
+                    ? MemoryImage(base64Decode(user.avatarUrl!))
+                    : null,
+                child: user.avatarUrl == null
+                    ? const Icon(Icons.person, size: 40, color: Colors.grey)
+                    : null,
+              ),
+              const SizedBox(height: 15),
+              Text(
+                user.username,
+                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              
+              const Spacer(),
+
+              // --- СРЕДНЯЯ СЕКЦИЯ: Идеальный мэтч или Статус заполнения ---
+              if (isMatch)
+                _buildMatchContent(user)
+              else if (noSkillsProvided)
+                _buildNewcomerBadge() // Красивый статус для тех, кто не заполнил навыки
+              else
                 Text(
-                  user.username,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18,
-                    color: AppColors.navy,
-                  ),
+                  "Готов к общению",
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 13, fontWeight: FontWeight.w500),
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      Icons.star_rounded,
-                      color: Colors.orange,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      user.rating.toStringAsFixed(1),
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(width: 15),
-                  ],
+
+              const Spacer(),
+
+              // --- Кнопка ---
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isMatch ? Colors.amber : AppColors.primary,
+                  minimumSize: const Size(double.infinity, 50),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                  elevation: 0,
                 ),
-                const Spacer(),
-                if (isMatch)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 15),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Text(
-                      "ИДЕАЛЬНЫЙ МЭТЧ",
-                      style: TextStyle(
-                        color: Colors.orange,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                // КНОПКА ДЕЙСТВИЯ
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isMatch ? Colors.amber : AppColors.primary,
-                    minimumSize: const Size(double.infinity, 50),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                    elevation: 0,
-                  ),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => UserDetailScreen(userId: user.id),
-                    ),
-                  ),
-                  child: const Text(
-                    "ПОСМОТРЕТЬ ПРОФИЛЬ",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                    ),
-                  ),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => UserDetailScreen(userId: user.id)),
                 ),
-              ],
-            ),
+                child: const Text(
+                  "ПОСМОТРЕТЬ ПРОФИЛЬ",
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+              ),
+            ],
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
+
+// Виджет для пользователей без навыков
+Widget _buildNewcomerBadge() {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    decoration: BoxDecoration(
+      color: Colors.blueGrey.withOpacity(0.05),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.edit_note_rounded, size: 16, color: Colors.blueGrey.shade300),
+        const SizedBox(width: 8),
+        Text(
+          "Навыки не указаны",
+          style: TextStyle(color: Colors.blueGrey.shade400, fontSize: 12, fontWeight: FontWeight.bold),
+        ),
+      ],
+    ),
+  );
+}
+
+// Виджет контента для идеального мэтча
+Widget _buildMatchContent(UserDto user) {
+  return Column(
+    children: [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(color: Colors.amber.shade50, borderRadius: BorderRadius.circular(10)),
+        child: const Text(
+          "ИДЕАЛЬНЫЙ МЭТЧ",
+          style: TextStyle(color: Colors.orange, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 0.5),
+        ),
+      ),
+      const SizedBox(height: 10),
+      Text(
+        "Взаимный интерес в ${user.matchTeaching.length + user.matchLearning.length} темах",
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 11, color: AppColors.navy, fontWeight: FontWeight.w600),
+      ),
+    ],
+  );
+}
 
   Widget _buildEmptyState() {
     return Center(

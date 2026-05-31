@@ -1,7 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:hive_app/providers/task_provider.dart';
 import 'package:hive_app/services/api_client.dart';
+import 'package:provider/provider.dart';
 import '../models/all_models.dart';
 import '../services/goal_service.dart';
 
@@ -22,25 +24,68 @@ class GoalProvider extends ChangeNotifier {
   }
 
 
-  Future<bool> addFileMaterial(int goalId, String title, int? taskId) async {
-    try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles();
-      if (result != null) {
-        String filePath = result.files.single.path!;
-        FormData data = FormData.fromMap({
-          "goalId": goalId,
-          "title": title,
-          "type": "File",
-          "taskId": taskId,
-          "file": await MultipartFile.fromFile(filePath, filename: result.files.single.name)
-        });
-        await _api.dio.post("/Goals/materials/upload", data: data);
-        await loadGoals(_goals.first.userId);
-        return true;
-      }
-    } catch (e) { return false; }
-    return false;
+Future<bool> addFileMaterial(int goalId, String title, int? taskId, PlatformFile file) async {
+  try {
+    // Создаем MultipartFile в зависимости от платформы
+    late MultipartFile multipartFile;
+    
+    if (file.bytes != null) {
+      // Веб-платформа - используем bytes
+      multipartFile = MultipartFile.fromBytes(
+        file.bytes!,
+        filename: file.name,
+      );
+    } else if (file.path != null) {
+      // Мобильная платформа - используем path
+      multipartFile = await MultipartFile.fromFile(
+        file.path!,
+        filename: file.name,
+      );
+    } else {
+      throw Exception('No file data available');
+    }
+    
+    FormData data = FormData.fromMap({
+      "GoalId": goalId,
+      "Title": title,
+      "Type": "File",
+      "TaskId": taskId,
+      "File": multipartFile,
+    });
+    
+    final response = await _api.dio.post("/Goals/materials/upload", data: data);
+    
+    if (response.statusCode == 200) {
+      await loadGoals(_goals.first.userId);
+      return true;
+    }
+  } catch (e) {
+    debugPrint("Error uploading file material: $e");
   }
+  return false;
+}
+
+// Обновленный метод для поддержки и файлов и ссылок
+Future<bool> addMaterialWithTask(int goalId, String title, String content, String type, int? taskId, {PlatformFile? file}) async {
+  if (type == "File" && file != null) {
+    return await addFileMaterial(goalId, title, taskId, file);
+  }
+  
+  // Для ссылок используем существующий метод
+  bool success = await _goalService.addMaterial(
+    goalId: goalId,
+    title: title,
+    content: content,
+    type: type,
+    taskId: taskId,
+  );
+
+  if (success) {
+    final goal = _goals.firstWhere((g) => g.id == goalId);
+    await loadGoals(goal.userId);
+  }
+  return success;
+}
 
   /// Загрузка списка целей (Синхронизировано с Service)
   Future<void> loadGoals(int userId) async {
@@ -90,22 +135,6 @@ class GoalProvider extends ChangeNotifier {
     return success;
   }
 
-  /// Добавление материала (исправлено)
-  Future<bool> addMaterialWithTask(int goalId, String title, String content, String type, int? taskId) async {
-    bool success = await _goalService.addMaterial(
-      goalId: goalId,
-      title: title,
-      content: content,
-      type: type,
-      taskId: taskId,
-    );
-
-    if (success) {
-      final goal = _goals.firstWhere((g) => g.id == goalId);
-      await loadGoals(goal.userId);
-    }
-    return success;
-  }
 
   /// Удаление материала
   Future<bool> deleteMaterial(int goalId, int materialId) async {
@@ -134,25 +163,59 @@ class GoalProvider extends ChangeNotifier {
     }
   }
 
-  /// Удаление маршрута
-  Future<void> removeGoal(int goalId, int userId) async {
-    bool success = await _goalService.deleteGoal(goalId);
-    if (success) {
-      _goals.removeWhere((g) => g.id == goalId);
+Future<void> removeGoal(int goalId, int userId) async {
+  // 1. Находим и удаляем локально сразу
+  _goals.removeWhere((g) => g.id == goalId);
+  notifyListeners(); // UI скроет карточку мгновенно
+
+  try {
+    final success = await _goalService.deleteGoal(goalId);
+    if (!success) {
+      // Если сервер не удалил — вернем данные (опционально)
+      await loadGoals(userId); 
+    }
+  } catch (e) {
+    print("Ошибка при удалении: $e");
+  }
+}
+
+
+void removeTaskFromGoal(int goalId, int taskId) {
+  // 1. Ищем индекс цели
+  final gIdx = _goals.indexWhere((g) => g.id == goalId);
+  if (gIdx != -1) {
+    // 2. Создаем НОВЫЙ список задач без удаленной задачи
+    final updatedTasks = _goals[gIdx].tasks.where((t) => t.id != taskId).toList();
+    
+    // 3. Обновляем цель целиком через copyWith
+    _goals[gIdx] = _goals[gIdx].copyWith(tasks: updatedTasks);
+    
+    // 4. Пересчитываем прогресс цели локально (чтобы цифра сразу стала верной)
+    // Допустим, мы считаем прогресс по создателю:
+    int done = updatedTasks.where((t) => t.completions.any((c) => c.username == _goals[gIdx].userId.toString())).length;
+    _goals[gIdx] = _goals[gIdx].copyWith(
+      progress: updatedTasks.isEmpty ? 0 : (done / updatedTasks.length * 100)
+    );
+
+    notifyListeners();
+  }
+}
+
+
+Future<void> respondToGoalInvite(int goalId, bool accept, int myId, BuildContext context) async {
+  try {
+    final response = await _api.dio.post("/Goals/invitation/$goalId/respond?accept=$accept");
+    if (response.statusCode == 200) {
+      // 1. Сразу обновляем цели
+      await loadGoals(myId);
+      // 2. СРАЗУ ОБНОВЛЯЕМ ЗАДАЧИ ДЛЯ ГЛАВНОЙ (чтобы они появились мгновенно)
+      await context.read<TaskProvider>().loadAllTasks();
       notifyListeners();
     }
+  } catch (e) {
+    debugPrint("Ошибка принятия приглашения: $e");
   }
-
-
-  /// Ответ на приглашение
-  Future<bool> respondToGoalInvite(int goalId, bool accept, int userId) async {
-    bool success = await _goalService.respondToInvite(goalId, accept);
-    if (success) {
-      await loadGoals(userId);
-    }
-    return success;
-  }
-
+}
 
   // В GoalProvider.dart
 
@@ -178,9 +241,75 @@ class GoalProvider extends ChangeNotifier {
     }
   }
 
-  // providers/goal_provider.dart
+Future<bool> removeMember(int goalId, int memberId) async {
+  try {
+    final response = await _api.dio.delete("/Goals/$goalId/members/$memberId");
+    if (response.statusCode == 200) {
+      // 1. Находим цель и удаляем участника локально
+      final goalIndex = _goals.indexWhere((g) => g.id == goalId);
+      if (goalIndex != -1) {
+        _goals[goalIndex].collaborators.removeWhere((c) => c.id == memberId);
+        
+        // *** ВАЖНОЕ ИСПРАВЛЕНИЕ: Очищаем completions удаленного участника из ВСЕХ задач ***
+        final updatedTasks = _goals[goalIndex].tasks.map((task) {
+          // Удаляем completions удаленного пользователя
+          final filteredCompletions = task.completions
+              .where((c) => c.username != _goals[goalIndex].collaborators
+                  .firstWhere((col) => col.id == memberId, 
+                    orElse: () => GoalPartnerDto(
+                      id: memberId, 
+                      name: "", 
+                      progress: 0, 
+                      avatarUrl: null, 
+                      isConfirmed: false, 
+                      isAdmin: false
+                    ))
+                  .name)
+              .toList();
+          
+          // Возвращаем обновленную задачу
+          return task.copyWith(completions: filteredCompletions);
+        }).toList();
+        
+        // Обновляем цель с очищенными задачами
+        _goals[goalIndex] = _goals[goalIndex].copyWith(tasks: updatedTasks);
+      }
+      
+      // 2. Уведомляем интерфейс
+      notifyListeners();
+      return true;
+    }
+  } catch (e) {
+    debugPrint("Error removeMember: $e");
+  }
+  return false;
+}
 
-// lib/providers/goal_provider.dart
+// В классе GoalProvider добавьте метод:
+Future<void> updateGoalMode(int goalId, bool newIsSolo) async {
+  try {
+    final response = await _api.dio.patch(
+      "/Goals/$goalId/toggle-solo", // Ваш эндпоинт для смены режима
+      data: newIsSolo, // Отправляем новое значение isSolo
+      options: Options(headers: {'Content-Type': 'application/json'})
+    );
+
+    if (response.statusCode == 200) {
+      // Находим цель в списке и обновляем её
+      final index = _goals.indexWhere((g) => g.id == goalId);
+      if (index != -1) {
+        // Создаем новую копию цели с измененным флагом
+        final updatedGoal = _goals[index].copyWith(isSolo: newIsSolo);
+        _goals[index] = updatedGoal;
+        
+        // Уведомляем всех, кто слушает изменения
+        notifyListeners(); 
+      }
+    }
+  } catch (e) {
+    debugPrint("Ошибка смены режима цели: $e");
+  }
+}
 
 void syncTaskInGoal(int goalId, TaskResponse updatedTask) {
   // 1. Ищем индекс цели в списке _goals
@@ -208,6 +337,21 @@ void syncTaskInGoal(int goalId, TaskResponse updatedTask) {
   }
 }
 
+Future<bool> leaveGoal(int goalId) async {
+  try {
+    final response = await _api.dio.post("/Goals/$goalId/leave");
+    if (response.statusCode == 200) {
+      _goals.removeWhere((g) => g.id == goalId);
+      notifyListeners();
+      return true;
+    }
+  } catch (e) {
+    debugPrint("Error leaveGoal: $e");
+  }
+  return false;
+}
+
+
   Future<void> invitePartner(int goalId, int partnerId, int creatorId) async {
     try {
       final response = await _api.dio.post("/Goals/$goalId/invite/$partnerId");
@@ -225,14 +369,11 @@ Future<void> makeGoalPersonal(int goalId) async {
   try {
     final response = await _api.dio.post("/Goals/$goalId/make-solo");
     if (response.statusCode == 200) {
-      // После этого бэкенд отцепил всех партнеров, удаляем их локально
-      int idx = _goals.indexWhere((g) => g.id == goalId);
-      if (idx != -1) {
-        _goals[idx] = _goals[idx].copyWith(
-          isSolo: true,
-          collaborators: [] // Все партнеры исчезают
-        );
-        notifyListeners();
+      // Находим userId и перезагружаем все данные
+      final goalIndex = _goals.indexWhere((g) => g.id == goalId);
+      if (goalIndex != -1) {
+        final userId = _goals[goalIndex].userId;
+        await loadGoals(userId);
       }
     }
   } catch (e) {
@@ -251,9 +392,25 @@ Future<void> makeGoalPersonal(int goalId) async {
   }
 
   /// Работа с AI черновиками
-  Future<List<TaskDraftResponse>> getDraftSteps(String title, String why, String result, DateTime date) async {
-    return await _goalService.generateDraft(title, why, result, date);
+// В GoalProvider.dart исправьте этот метод:
+Future<List<TaskDraftResponse>> getDraftSteps(String title, String why, String result, DateTime date) async {
+  _isLoading = true;
+  notifyListeners();
+  
+  try {
+    // Получаем свежий список от сервиса
+    final freshSteps = await _goalService.generateDraft(title, why, result, date);
+    
+    _isLoading = false;
+    notifyListeners();
+    
+    return freshSteps; // Возвращаем ТОЛЬКО новые шаги
+  } catch (e) {
+    _isLoading = false;
+    notifyListeners();
+    return [];
   }
+}
 
   void clearGoals() {
     _goals = [];

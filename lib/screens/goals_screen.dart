@@ -39,21 +39,41 @@ class _GoalsScreenState extends State<GoalsScreen> {
     double screenWidth = MediaQuery.of(context).size.width;
     bool isWide = screenWidth > 800;
 
-    // --- ЛОГИКА ФИЛЬТРАЦИИ: СКРЫВАЕМ НЕПОДТВЕРЖДЕННЫЕ ЦЕЛИ ---
+    // --- ЛОГИКА ФИЛЬТРАЦИИ ---
     List<GoalResponse> visibleGoals = provider.goals.where((g) {
-      // 1. Если я создатель — вижу всегда
+      // Если я создатель — вижу всегда
       if (g.userId == myId) return true;
       
-      // 2. Если я партнер — вижу ТОЛЬКО если я подтвердил приглашение (isConfirmed)
+      // Если я партнер — вижу ТОЛЬКО если я подтвердил приглашение
       bool confirmed = g.collaborators.any((c) => c.id == myId && c.isConfirmed);
       return confirmed;
     }).toList();
 
-    // Применяем визуальный фильтр (Все/Мои/Групповые) к уже отфильтрованному списку
+    // *** ИСПРАВЛЕННАЯ ФИЛЬТРАЦИЯ ПО ТИПУ ***
     List<GoalResponse> filteredGoals = visibleGoals.where((g) {
       if (_filterType == "All") return true;
+      
+      // Проверяем разные возможные значения типов
+      if (_filterType == "Personal") {
+        // Личные цели - isSolo = true
+        return g.isSolo == true;
+      }
+      
+      if (_filterType == "Group") {
+        // Групповые цели - isSolo = false
+        return g.isSolo == false;
+      }
+      
+      // Точное совпадение по goalType
       return g.goalType == _filterType;
     }).toList();
+
+    // Отладка
+    debugPrint('Total goals: ${provider.goals.length}');
+    debugPrint('Visible goals: ${visibleGoals.length}');
+    debugPrint('Filtered goals (${_filterType}): ${filteredGoals.length}');
+    debugPrint('Goal types: ${visibleGoals.map((g) => g.goalType).toSet()}');
+    debugPrint('IsSolo values: ${visibleGoals.map((g) => g.isSolo).toSet()}');
 
     return Scaffold(
       backgroundColor: isWide ? Colors.transparent : AppColors.background,
@@ -93,9 +113,9 @@ class _GoalsScreenState extends State<GoalsScreen> {
         children: [
           _filterChip("Все маршруты", "All"),
           const SizedBox(width: 10),
-          _filterChip("Мои цели", "Social"),
+          _filterChip("Личные", "Personal"),      // Фильтр по isSolo
           const SizedBox(width: 10),
-          _filterChip("Групповые", "Group"),
+          _filterChip("Групповые", "Group"),       // Фильтр по isSolo
         ],
       ),
     );
@@ -131,9 +151,17 @@ class _GoalsScreenState extends State<GoalsScreen> {
     return ChoiceChip(
       label: Text(label),
       selected: isSelected,
-      onSelected: (val) => setState(() => _filterType = type),
+      onSelected: (val) {
+        if (val) {
+          setState(() => _filterType = type);
+          debugPrint('Filter changed to: $type');
+        }
+      },
       selectedColor: AppColors.navy,
-      labelStyle: TextStyle(color: isSelected ? Colors.white : AppColors.navy, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
+      labelStyle: TextStyle(
+        color: isSelected ? Colors.white : AppColors.navy, 
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      ),
       backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       showCheckmark: false,
@@ -141,13 +169,36 @@ class _GoalsScreenState extends State<GoalsScreen> {
   }
 
   Widget _buildGoalCard(BuildContext context, GoalResponse g, int myId, bool isWide) {
-    Color color = g.goalType == "Group" ? Colors.purple : AppColors.primary;
+    Color color = g.isSolo ? AppColors.primary : Colors.purple;
     
+    // Ищем информацию о текущем пользователе в коллабораторах
+    final myInfo = g.collaborators.firstWhere(
+      (c) => c.id == myId,
+      orElse: () => GoalPartnerDto(
+        id: myId, 
+        name: "", 
+        progress: g.progress,
+        isConfirmed: true, 
+        isAdmin: false,
+        avatarUrl: null
+      ),
+    );
+
+    // Если пользователь - создатель, используем общий прогресс цели
+    // Если партнер - используем его персональный прогресс
+    double displayProgress = g.userId == myId ? g.progress : myInfo.progress;
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white, 
         borderRadius: BorderRadius.circular(24), 
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, 8))]
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04), 
+            blurRadius: 15, 
+            offset: const Offset(0, 8)
+          )
+        ]
       ),
       child: Material(
         color: Colors.transparent,
@@ -168,18 +219,57 @@ class _GoalsScreenState extends State<GoalsScreen> {
                   children: [
                     Container(
                       padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
-                      child: const Icon(Icons.flag_rounded, color: AppColors.primary, size: 20),
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(0.1), 
+                        borderRadius: BorderRadius.circular(12)
+                      ),
+                      child: Icon(
+                        g.isSolo ? Icons.person_outline : Icons.groups_rounded, 
+                        color: color, 
+                        size: 20,
+                      ),
                     ),
                     const SizedBox(width: 15),
-                    Expanded(child: Text(g.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: AppColors.navy), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            g.title, 
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold, 
+                              fontSize: 17, 
+                              color: AppColors.navy
+                            ), 
+                            maxLines: 1, 
+                            overflow: TextOverflow.ellipsis
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            g.isSolo ? "Личный маршрут" : "Групповой маршрут",
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey.shade500,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
                 const Spacer(),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text("${g.progress.toInt()}% пройдено", style: const TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold)),
+                    Text(
+                      "${displayProgress.toInt()}% пройдено", 
+                      style: const TextStyle(
+                        fontSize: 12, 
+                        color: Colors.grey, 
+                        fontWeight: FontWeight.bold
+                      )
+                    ),
                     Icon(Icons.chevron_right, size: 16, color: Colors.grey.shade400),
                   ],
                 ),
@@ -187,7 +277,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: LinearProgressIndicator(
-                    value: g.progress / 100,
+                    value: displayProgress / 100,
                     minHeight: 8,
                     backgroundColor: Colors.grey.shade100,
                     color: color,
@@ -195,7 +285,15 @@ class _GoalsScreenState extends State<GoalsScreen> {
                 ),
                 const Spacer(),
                 if (isWide) 
-                   const Text("ОТКРЫТЬ ПОДРОБНО", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: AppColors.primary, letterSpacing: 0.5)),
+                  const Text(
+                    "ОТКРЫТЬ ПОДРОБНО", 
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900, 
+                      fontSize: 11, 
+                      color: AppColors.primary, 
+                      letterSpacing: 0.5
+                    ),
+                  ),
               ],
             ),
           ),

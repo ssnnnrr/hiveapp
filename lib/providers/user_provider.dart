@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:hive_app/providers/group_provider.dart';
+import 'package:hive_app/providers/task_provider.dart';
+import 'package:provider/provider.dart';
 import '../models/all_models.dart';
 import '../services/user_service.dart';
 
@@ -129,6 +132,39 @@ Future<void> searchPartners(int? skillId, String type, {String? query}) async {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  // Обновите этот метод в UserProvider
+  Future<bool> terminatePartnership(int friendId, BuildContext context) async {
+    _isLoading = true;
+    notifyListeners();
+    
+    bool ok = await _userService.unfriend(friendId);
+    if (ok) {
+      // 1. Удаляем из списка друзей локально
+      _friends.removeWhere((f) => f.id == friendId);
+      
+      // 2. ОБНОВЛЯЕМ ЧАТЫ И ЗАДАЧИ:
+      // Мы вызываем loadGroups и loadAllTasks, чтобы удаленный чат и его шаги исчезли из UI
+      await context.read<GroupProvider>().loadGroups();
+      await context.read<TaskProvider>().loadAllTasks();
+
+      // 3. Если смотрим профиль этого человека, обновляем статус кнопок
+      if (_targetFullProfile?.id == friendId) {
+        await loadTargetProfile(friendId);
+      }
+      
+      notifyListeners();
+    }
+    
+    _isLoading = false;
+    notifyListeners();
+    return ok;
+  }
+
+
+  Future<List<UserDto>> getPartnersOfUser(int userId) async {
+    return await _userService.getPartnersOfUser(userId);
   }
 
   // Метод для полной очистки данных пользователя (при выходе)

@@ -29,8 +29,23 @@ class _GoalPreviewScreenState extends State<GoalPreviewScreen> {
   @override
   void initState() {
     super.initState();
-    _steps = List.from(widget.initialSteps);
+    // Создаем глубокую копию списка, чтобы не тянуть данные из прошлых сессий
+    _steps = widget.initialSteps.map((s) => TaskDraftResponse(
+      title: s.title, 
+      dueDate: s.dueDate
+    )).toList();
   }
+  
+  // Добавьте метод ручного добавления, который не ломает счетчик
+  void _addNewStep() {
+    setState(() {
+      _steps.add(TaskDraftResponse(
+        title: "Новый этап", 
+        dueDate: _steps.isNotEmpty ? _steps.last.dueDate.add(Duration(days: 1)) : DateTime.now()
+      ));
+    });
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -58,12 +73,26 @@ class _GoalPreviewScreenState extends State<GoalPreviewScreen> {
               ),
             ),
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(20),
-              itemCount: _steps.length,
-              itemBuilder: (ctx, i) => _buildStepCard(i),
+    child: ListView.builder(
+      padding: const EdgeInsets.all(20),
+      // Увеличиваем itemCount на 1 для кнопки добавления
+      itemCount: _steps.length + 1, 
+      itemBuilder: (ctx, i) {
+        if (i == _steps.length) {
+          // Кнопка добавления в конце списка
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: TextButton.icon(
+              onPressed: _addNewStep,
+              icon: const Icon(Icons.add_circle_outline, color: AppColors.primary),
+              label: const Text("ДОБАВИТЬ ШАГ", style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
             ),
-          ),
+          );
+        }
+        return _buildStepCard(i);
+      },
+    ),
+  ),
           _buildBottomAction(),
         ],
       ),
@@ -77,29 +106,34 @@ class _GoalPreviewScreenState extends State<GoalPreviewScreen> {
   }
 
   Widget _buildStepCard(int index) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 15),
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15)),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              CircleAvatar(backgroundColor: AppColors.navy, radius: 12, child: Text("${index + 1}", style: const TextStyle(fontSize: 10, color: Colors.white))),
-              const SizedBox(width: 15),
-              Expanded(
-                child: TextFormField(
-                  initialValue: _steps[index].title,
-                  decoration: const InputDecoration(border: InputBorder.none),
-                  onChanged: (v) => _steps[index] = TaskDraftResponse(title: v, dueDate: _steps[index].dueDate),
-                ),
+  return Container(
+    key: ValueKey("draft_step_${index}_${_steps[index].title}"), 
+    margin: const EdgeInsets.only(bottom: 15),
+    padding: const EdgeInsets.all(15),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15)),
+    child: Column(
+      children: [
+        Row(
+          children: [
+            CircleAvatar(backgroundColor: AppColors.navy, radius: 12, child: Text("${index + 1}", style: const TextStyle(fontSize: 10, color: Colors.white))),
+            const SizedBox(width: 15),
+            Expanded(
+              child: TextFormField(
+                // Использовать контроллер или начальное значение
+                key: ValueKey("step_$index"), // Важно для корректного перестроения списка
+                initialValue: _steps[index].title,
+                decoration: const InputDecoration(hintText: "Название шага...", border: InputBorder.none),
+                onChanged: (v) {
+                   _steps[index] = TaskDraftResponse(title: v, dueDate: _steps[index].dueDate);
+                },
               ),
-              IconButton(
-                icon: const Icon(Icons.delete_sweep, color: Colors.redAccent),
-                onPressed: () => setState(() => _steps.removeAt(index)),
-              ),
-            ],
-          ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_sweep, color: Colors.redAccent),
+              onPressed: () => setState(() => _steps.removeAt(index)),
+            ),
+          ],
+        ),
           const Divider(),
           ListTile(
             contentPadding: EdgeInsets.zero,

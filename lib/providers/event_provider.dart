@@ -9,6 +9,7 @@ class EventProvider extends ChangeNotifier {
 
   List<EventResponse> get events => _events;
   bool get isLoading => _isLoading;
+  
 
   Future<void> loadEvents() async {
     _isLoading = true;
@@ -27,13 +28,15 @@ class EventProvider extends ChangeNotifier {
   // Создание события (Link, Location, Image - необязательные)
 // Внутри EventProvider измените эти методы:
 
+// Внутри EventProvider.dart
+
 Future<bool> addEvent(String title, String? desc, DateTime date, String? link, String? loc, String? img) async {
   try {
     final response = await _api.dio.post("/Events", data: {
       "title": title,
       "description": desc,
-      // Шлем на сервер время, явно указывая, что это UTC
-      "eventDate": date.toUtc().toIso8601String(), 
+      // УБРАЛИ .toUtc(), отправляем локальное время устройства
+      "eventDate": date.toIso8601String(), 
       "linkUrl": link,
       "location": loc,
       "imageUrl": img
@@ -51,7 +54,7 @@ Future<bool> updateEvent(int id, String title, String? desc, DateTime date, Stri
     final response = await _api.dio.put("/Events/$id", data: {
       "title": title,
       "description": desc,
-      "eventDate": date.toUtc().toIso8601String(), // Здесь исправлен фикс времени
+      "eventDate": date.toIso8601String(), // Локальное время
       "linkUrl": link,
       "location": loc,
       "imageUrl": img
@@ -63,6 +66,13 @@ Future<bool> updateEvent(int id, String title, String? desc, DateTime date, Stri
   } catch (e) { debugPrint(e.toString()); }
   return false;
 }
+
+void clearData() {
+  _events = [];
+  _isLoading = false;
+  notifyListeners();
+}
+
   // Чекбокс выполнения
   Future<void> toggleEvent(int id) async {
     try {

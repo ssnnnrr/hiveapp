@@ -37,14 +37,12 @@ class MainScreenState extends State<MainScreen> {
   }
 
   void _handleJumpToDate(DateTime date) {
-    // Быстро переключаемся на рабочий стол
     if (_selectedIndex != 0) {
       setState(() {
         _selectedIndex = 0;
       });
     }
     
-    // Даем время на переключение и прыгаем к дате
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _tasksKey.currentState?.jumpToDate(date);
     });
@@ -63,6 +61,8 @@ class MainScreenState extends State<MainScreen> {
     return MainDashboardLayout(
       selectedIndex: _selectedIndex,
       onJumpToDate: _handleJumpToDate,
+      // 4. Передаем метод смены индекса в лейаут
+      onTabSelected: (index) => setIndex(index), 
       child: IndexedStack(
         index: _selectedIndex,
         children: pages,

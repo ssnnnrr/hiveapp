@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:hive_app/models/all_models.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../providers/group_provider.dart';
 import '../providers/auth_provider.dart';
@@ -12,48 +14,59 @@ class GroupsScreen extends StatefulWidget {
 }
 
 class _GroupsScreenState extends State<GroupsScreen> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _filter = "";
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final user = context.read<AuthProvider>().user;
-      if (user != null && mounted) context.read<GroupProvider>().loadGroups();
-    });
+    _refresh();
+  }
+
+  void _refresh() {
+    final user = context.read<AuthProvider>().user;
+    if (user != null) context.read<GroupProvider>().loadGroups();
   }
 
   @override
   Widget build(BuildContext context) {
     final prov = context.watch<GroupProvider>();
+    final auth = context.read<AuthProvider>();
     double width = MediaQuery.of(context).size.width;
     bool isWide = width > 800;
 
+    // Фильтрация
+    final filteredGroups = prov.groups.where((g) => 
+      g.name.toLowerCase().contains(_filter.toLowerCase())).toList();
+
     return Scaffold(
-      backgroundColor: isWide ? Colors.transparent : const Color(0xFFF0F2F5),
+      backgroundColor: isWide ? Colors.transparent : const Color(0xFFF8FAFD),
       body: prov.isLoading 
         ? const Center(child: CircularProgressIndicator())
         : Padding(
-            padding: EdgeInsets.all(isWide ? 40 : 20),
+            padding: EdgeInsets.symmetric(
+              horizontal: isWide ? 60 : 20, 
+              vertical: 30
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (isWide) const Text("Ваши обсуждения", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.navy)),
-                if (isWide) const SizedBox(height: 30),
+                // Заголовок
+                _buildHeader(isWide),
+                const SizedBox(height: 25),
                 
+                // Поиск
+                _buildSearchBar(),
+                const SizedBox(height: 25),
+                
+                // Список
                 Expanded(
-                  child: prov.groups.isEmpty
+                  child: filteredGroups.isEmpty
                     ? _buildEmptyState()
-                    : GridView.builder(
-                        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: isWide ? 400 : width,
-                          mainAxisExtent: 100,
-                          crossAxisSpacing: 15,
-                          mainAxisSpacing: 15,
-                        ),
-                        itemCount: prov.groups.length,
-                        itemBuilder: (context, i) {
-                          final g = prov.groups[i];
-                          return _buildGroupTile(context, g);
-                        },
+                    : ListView.builder(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        itemCount: filteredGroups.length,
+                        itemBuilder: (ctx, i) => _buildGroupCard(filteredGroups[i], auth.user?.id ?? 0),
                       ),
                 ),
               ],
@@ -62,43 +75,145 @@ class _GroupsScreenState extends State<GroupsScreen> {
     );
   }
 
-  // ИСПРАВЛЕНО: Используем Material вместо Container с decoration + ListTile
-  Widget _buildGroupTile(BuildContext context, g) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-      elevation: 0,
-      shadowColor: Colors.black.withOpacity(0.03),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(group: g))),
+  Widget _buildHeader(bool isWide) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "Обсуждения", 
+          style: TextStyle(
+            fontSize: isWide ? 32 : 26, 
+            fontWeight: FontWeight.w900, 
+            color: AppColors.navy,
+            letterSpacing: -0.5
+          )
+        ),
+        const SizedBox(height: 4),
+        Text(
+          "Ваши чаты и активные планы обучения", 
+          style: TextStyle(fontSize: 14, color: Colors.grey.shade600, fontWeight: FontWeight.w500)
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 25,
-                backgroundColor: AppColors.primary.withOpacity(0.1),
-                child: Text(g.name[0].toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.navy)),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 15, offset: const Offset(0, 5))],
+      ),
+      child: TextField(
+        controller: _searchCtrl,
+        onChanged: (v) => setState(() => _filter = v),
+        decoration: InputDecoration(
+          hintText: "Поиск по именам и чатам...",
+          hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+          prefixIcon: const Icon(Icons.search_rounded, color: Colors.grey),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 15),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGroupCard(GroupResponse g, int myId) {
+    bool hasUnread = g.unreadCount > 0;
+    String time = g.lastMessageAt != null ? DateFormat('HH:mm').format(g.lastMessageAt!) : "";
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
+        border: Border.all(color: hasUnread ? AppColors.primary.withOpacity(0.1) : Colors.transparent),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: () {
+            
+            Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(group: g)));
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                // Техно-аватар
+                Stack(
                   children: [
-                    Text(g.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                    const SizedBox(height: 4),
-                    Text(
-                      g.isSolo ? "Личный чат" : "Группа: ${g.membersCount} участников", 
-                      style: const TextStyle(fontSize: 12, color: Colors.grey)
+                    Container(
+                      width: 58, height: 58,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [AppColors.navy, AppColors.navy.withOpacity(0.7)],
+                          begin: Alignment.topLeft, end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Center(
+                        child: Text(
+                          g.name[0].toUpperCase(), 
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 22)
+                        ),
+                      ),
                     ),
+                    if (hasUnread)
+                      Positioned(
+                        right: -2, top: -2,
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.redAccent, 
+                            shape: BoxShape.circle, 
+                            border: Border.all(color: Colors.white, width: 3)
+                          ),
+                          child: Text(
+                            g.unreadCount.toString(), 
+                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)
+                          ),
+                        ),
+                      ),
                   ],
                 ),
-              ),
-              const Icon(Icons.chevron_right_rounded, color: Colors.grey),
-            ],
+                const SizedBox(width: 18),
+                
+                // Контент
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            g.name, 
+                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: AppColors.navy)
+                          ),
+                          Text(time, style: TextStyle(fontSize: 11, color: Colors.grey.shade400)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        g.lastMessage ?? (g.isSolo ? "Начните диалог" : "Группа: ${g.membersCount} участников"),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13, 
+                          color: hasUnread ? AppColors.navy : Colors.grey.shade500,
+                          fontWeight: hasUnread ? FontWeight.w700 : FontWeight.normal
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Color(0xFFE2E8F0)),
+              ],
+            ),
           ),
         ),
       ),
@@ -110,9 +225,11 @@ class _GroupsScreenState extends State<GroupsScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.chat_bubble_outline_rounded, size: 60, color: Colors.grey.withOpacity(0.2)),
-          const SizedBox(height: 15),
-          const Text("У вас пока нет активных чатов", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+          Icon(Icons.forum_outlined, size: 70, color: Colors.grey.withOpacity(0.2)),
+          const SizedBox(height: 20),
+          const Text("Пока нет обсуждений", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 5),
+          const Text("Договоритесь обмене на бирже и чат появится здесь", style: TextStyle(color: Colors.grey, fontSize: 12)),
         ],
       ),
     );

@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 import '../models/all_models.dart';
 import 'api_client.dart';
 import 'package:dio/dio.dart';
@@ -98,6 +100,34 @@ class UserService {
       return true;
     } catch (e) { return false; }
   }
+
+
+  // Получение списка партнеров (друзей) конкретного пользователя
+  Future<List<UserDto>> getPartnersOfUser(int userId) async {
+    try {
+      final response = await _api.dio.get("/Friends/user/$userId");
+      if (response.statusCode == 200) {
+        return (response.data as List).map((json) => UserDto.fromJson(json)).toList();
+      }
+      return [];
+    } catch (e) {
+      debugPrint("UserService Error [getPartnersOfUser]: $e");
+      return [];
+    }
+  }
+
+  // Метод для полного удаления партнера
+  Future<bool> unfriend(int friendId) async {
+    try {
+      // Предполагаем эндпоинт DELETE /api/Friends/{id}
+      final response = await _api.dio.delete("/Friends/$friendId");
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint("UserService Error [unfriend]: $e");
+      return false;
+    }
+  }
+  
 
 Future<List<UserDto>> findPartners({int? skillId, required String type, String? query}) async {
     try {

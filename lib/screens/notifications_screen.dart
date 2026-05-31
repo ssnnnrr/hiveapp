@@ -1,19 +1,20 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:hive_app/providers/event_provider.dart';
+import 'package:hive_app/providers/task_provider.dart';
 import 'package:provider/provider.dart';
 import '../providers/user_provider.dart';
 import '../providers/goal_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/notification_provider.dart';
-import '../providers/event_provider.dart';
-import '../providers/task_provider.dart';
 import '../providers/group_provider.dart';
 import '../models/all_models.dart';
 import '../theme/app_theme.dart';
+import 'chat_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
-  
+
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
@@ -27,66 +28,29 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     });
   }
 
-  void _refresh() async {
-    final user = context.read<AuthProvider>().user;
-    if (user != null) {
-      await context.read<NotificationProvider>().loadNotifications();
-      context.read<UserProvider>().loadRequests(); 
-      context.read<GoalProvider>().loadGoals(user.id);
-      
-      if (mounted) _cleanupStaleNotifications();
+  // В файле notifications_screen.dart
+
+void _refresh() async {
+  final auth = context.read<AuthProvider>();
+  final user = auth.user;
+  if (user != null) {
+    await Future.wait([
+      context.read<NotificationProvider>().loadNotifications(),
+      context.read<UserProvider>().loadRequests(),
+      context.read<GoalProvider>().loadGoals(user.id),
+      context.read<GroupProvider>().loadAllRoadmaps(),
+      context.read<EventProvider>().loadEvents(), // <-- ОБЯЗАТЕЛЬНО
+    ]);
+
+    if (mounted) {
+      context.read<NotificationProvider>().syncOverdueNotifications(
+        tasks: context.read<TaskProvider>().tasks,
+        events: context.read<EventProvider>().events,
+        roadmapSteps: context.read<GroupProvider>().allRoadmapSteps,
+      );
     }
   }
-
-  void _cleanupStaleNotifications() {
-    final notifProv = context.read<NotificationProvider>();
-    final eventProv = context.read<EventProvider>();
-    final taskProv = context.read<TaskProvider>();
-    final groupProv = context.read<GroupProvider>();
-    
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-
-    List<int> idsToRemove = [];
-
-    for (var notification in notifProv.notifications) {
-      bool isStale = false;
-
-      if (notification.type == "EventOverdue") {
-        final liveEvent = eventProv.events.firstWhere(
-          (e) => notification.message.contains(e.title),
-          orElse: () => EventResponse(id: -1, title: '', eventDate: DateTime.now(), isCompleted: false, creatorName: ''),
-        );
-        if (liveEvent.id == -1 || liveEvent.isCompleted || !liveEvent.eventDate.toLocal().isBefore(now)) {
-          isStale = true;
-        }
-      } 
-      else if (notification.type == "TaskOverdue") {
-        final liveTask = taskProv.tasks.firstWhere(
-          (t) => notification.message.contains(t.title),
-          orElse: () => TaskResponse(id: -1, title: '', dueDate: DateTime.now(), status: '', goalId: 0, goalTitle: '', creatorId: 0, completions: []),
-        );
-        if (liveTask.id == -1 || liveTask.status == "Done" || !liveTask.dueDate.toLocal().isBefore(today)) {
-          isStale = true;
-        }
-      } 
-      else if (notification.type == "RoadmapOverdue") {
-        final liveStep = groupProv.allRoadmapSteps.firstWhere(
-          (s) => notification.message.contains(s.content),
-          orElse: () => RoadmapStepDto(id: -1, content: '', dueDate: DateTime.now(), status: '', creatorId: 0),
-        );
-        if (liveStep.id == -1 || liveStep.status == "Done" || !liveStep.dueDate.toLocal().isBefore(now)) {
-          isStale = true;
-        }
-      }
-
-      if (isStale) idsToRemove.add(notification.id);
-    }
-
-    if (idsToRemove.isNotEmpty) {
-      for (var id in idsToRemove) notifProv.markAsRead(id);
-    }
-  }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -95,138 +59,298 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final goalProv = context.watch<GoalProvider>();
     final myId = context.read<AuthProvider>().user?.id;
 
-    double width = MediaQuery.of(context).size.width;
-    bool isWide = width > 850;
+    // Группировка уведомлений по важности
+    final urgent = notifyProv.notifications.where((n) =>
+        n.type == "EventOverdue" ||
+        n.type == "TaskOverdue" ||
+        n.type == "RoadmapOverdue" ||
+        n.type == "TaskRejected").toList();
 
-    final goalInvites = goalProv.goals.where((g) => 
-      g.collaborators.any((c) => c.id == myId && !c.isConfirmed)).toList();
+    final normal = notifyProv.notifications.where((n) =>
+        !urgent.contains(n) && n.type != "GoalInvite").toList();
+
+    // Приглашения в цели (не подтвержденные мною)
+    final goalInvites = goalProv.goals.where((g) =>
+        g.collaborators.any((c) => c.id == myId && !c.isConfirmed)).toList();
 
     return Scaffold(
-      backgroundColor: isWide ? const Color(0xFFE2E8F0) : const Color(0xFFF8FAFC),
-      appBar: isWide ? null : AppBar(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
         backgroundColor: Colors.white,
-        elevation: 0.5,
-        leading: const BackButton(color: AppColors.navy),
-        title: const Text("Уведомления", style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold)),
-      ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: isWide ? 750 : double.infinity),
-          child: Container(
-            margin: EdgeInsets.symmetric(vertical: isWide ? 40 : 0),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(isWide ? 25 : 0),
-              boxShadow: isWide ? [BoxShadow(color: Colors.black12, blurRadius: 20)] : null,
-            ),
-            child: Column(
-              children: [
-                if (isWide) _buildWebHeader(notifyProv),
-                Expanded(
-                  child: notifyProv.isLoading 
-                    ? const Center(child: CircularProgressIndicator())
-                    : RefreshIndicator(
-                        onRefresh: () async => _refresh(),
-                        child: ListView(
-                          padding: const EdgeInsets.all(25),
-                          children: [
-                            if (notifyProv.notifications.isNotEmpty) ...[
-                              _sectionLabel("АКТУАЛЬНОЕ"),
-                              ...notifyProv.notifications.map((n) => _buildNotificationTile(n)),
-                              const SizedBox(height: 25),
-                            ],
-                            if (userProv.pendingRequests.isNotEmpty) ...[
-                              _sectionLabel("ПАРТНЕРСТВО"),
-                              ...userProv.pendingRequests.map((r) => _buildPartnerRequestTile(r)),
-                              const SizedBox(height: 25),
-                            ],
-                            if (goalInvites.isNotEmpty) ...[
-                              _sectionLabel("КОМАНДНЫЕ ЦЕЛИ"),
-                              ...goalInvites.map((g) => _buildGoalInviteTile(g, goalProv, myId!)),
-                            ],
-                            if (notifyProv.notifications.isEmpty && userProv.pendingRequests.isEmpty && goalInvites.isEmpty)
-                              _buildEmpty(),
-                          ],
-                        ),
-                      ),
-                ),
-              ],
-            ),
-          ),
+        elevation: 0,
+        centerTitle: false,
+        title: const Text(
+          "Уведомления",
+          style: TextStyle(fontWeight: FontWeight.w900, color: AppColors.navy, fontSize: 22),
         ),
+        
       ),
+      body: notifyProv.isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: () async => _refresh(),
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 10),
+                children: [
+                  // --- СЕКЦИЯ: ТРЕБУЕТ ВНИМАНИЯ (Красные) ---
+                  if (urgent.isNotEmpty) ...[
+                    _sectionLabel("⚠️ ТРЕБУЕТ ВНИМАНИЯ", Colors.redAccent),
+                    ...urgent.map((n) => _buildNotificationTile(n, Colors.redAccent)),
+                    const SizedBox(height: 25),
+                  ],
+
+                  // --- СЕКЦИЯ: ЗАЯВКИ В ДРУЗЬЯ ---
+                  if (userProv.pendingRequests.isNotEmpty) ...[
+                    _sectionLabel("👥 ЗАПРОСЫ В ПАРТНЕРЫ", Colors.blue),
+                    ...userProv.pendingRequests.map((r) => _buildPartnerRequestTile(r)),
+                    const SizedBox(height: 25),
+                  ],
+
+                  // --- СЕКЦИЯ: ПРИГЛАШЕНИЯ В ЦЕЛИ ---
+                  if (goalInvites.isNotEmpty) ...[
+                    _sectionLabel("🎯 НОВЫЕ МАРШРУТЫ", Colors.orange),
+                    ...goalInvites.map((g) => _buildGoalInviteTile(g, goalProv, myId!)),
+                    const SizedBox(height: 25),
+                  ],
+
+                  // --- СЕКЦИЯ: ОБЫЧНЫЕ ---
+                  if (normal.isNotEmpty) ...[
+                    _sectionLabel("ОБЫЧНЫЕ", Colors.grey),
+                    ...normal.map((n) => _buildNotificationTile(n, AppColors.primary)),
+                  ],
+
+                  // ПУСТОЕ СОСТОЯНИЕ
+                  if (notifyProv.notifications.isEmpty &&
+                      userProv.pendingRequests.isEmpty &&
+                      goalInvites.isEmpty)
+                    _buildEmpty(),
+
+                  const SizedBox(height: 100),
+                ],
+              ),
+            ),
     );
   }
 
-  Widget _buildWebHeader(NotificationProvider prov) => Container(
-    padding: const EdgeInsets.all(25),
-    decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9)))),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        const Text("Уведомления", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.navy)),
-        TextButton.icon(onPressed: () => prov.markAllAsRead(), icon: const Icon(Icons.done_all), label: const Text("Очистить все"))
-      ],
-    ),
-  );
+  Widget _sectionLabel(String text, Color color) => Padding(
+        padding: const EdgeInsets.only(left: 5, bottom: 12),
+        child: Text(
+          text,
+          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: color, letterSpacing: 1.5),
+        ),
+      );
 
-  Widget _sectionLabel(String t) => Padding(padding: const EdgeInsets.only(bottom: 15, left: 5), child: Text(t, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.grey, letterSpacing: 1.5)));
+  Widget _buildNotificationTile(AppNotification n, Color accentColor) {
+    bool isUrgent = accentColor == Colors.redAccent;
 
-  Widget _buildNotificationTile(AppNotification n) {
-  bool isUrgent = n.type == "EventOverdue" || n.type == "TaskOverdue" || n.type == "RoadmapOverdue";
-      return Container(
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: isUrgent ? const Color(0xFFFFF5F5) : const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: isUrgent ? Colors.redAccent.withOpacity(0.1) : Colors.transparent),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: accentColor.withOpacity(0.1), width: 1.5),
       ),
       child: ListTile(
-      leading: Icon(isUrgent ? Icons.warning : Icons.notifications, color: isUrgent ? Colors.red : Colors.blue),
-      title: Text(n.title),
-      subtitle: Text(n.message),
-      onTap: () {
-        context.read<NotificationProvider>().markAsRead(n.id);
-        
-        // ЕСЛИ ЕСТЬ ДАННЫЕ О ДАТЕ (должны приходить с бэкенда в поле Data)
-        if (n.data != null) {
-          try {
-            // Парсим дату просроченного задания
-            DateTime targetDate = DateTime.parse(n.data!);
-            // Возвращаемся на главный экран и передаем дату
-            Navigator.pop(context, targetDate); 
-          } catch (e) {
-            Navigator.pop(context);
-          }
-        } else {
-          Navigator.pop(context);
-        }
-      },
-    ),
-  );
-}
-
-  Widget _buildPartnerRequestTile(ChatRequestDto req) {
-    final userProv = context.read<UserProvider>();
-    return Card(
-      elevation: 0, color: const Color(0xFFF8FAFC), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-      child: ListTile(
-        leading: CircleAvatar(backgroundImage: req.senderAvatar != null ? MemoryImage(base64Decode(req.senderAvatar!)) : null, child: req.senderAvatar == null ? Text(req.senderName[0]) : null),
-        title: Text(req.senderName, style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: const Text("Запрос на обмен навыками"),
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [IconButton(icon: const Icon(Icons.check_circle, color: Colors.green), onPressed: () => userProv.acceptChatRequest(req.id)), IconButton(icon: const Icon(Icons.cancel, color: Colors.redAccent), onPressed: () => userProv.declineChatRequest(req.id))]),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
+        leading: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: accentColor.withOpacity(0.1), shape: BoxShape.circle),
+          child: Icon(
+            isUrgent ? Icons.warning_amber_rounded : Icons.notifications_none_rounded,
+            color: accentColor,
+            size: 22,
+          ),
+        ),
+        title: Text(
+          n.title,
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: isUrgent ? Colors.red.shade900 : AppColors.navy),
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(n.message, style: TextStyle(fontSize: 13, color: Colors.grey.shade700, height: 1.3)),
+        ),
+        trailing: IconButton(
+  icon: const Icon(Icons.close_rounded, size: 18, color: Colors.grey),
+  onPressed: () {
+    // Этот метод отправит запрос на сервер, поставит IsRead = true
+    // И бэкенд больше никогда его не пришлет в GetMyNotifications
+    context.read<NotificationProvider>().markAsRead(n.id);
+  },
+),
+        onTap: () => _handleNotificationClick(n),
       ),
     );
   }
 
-  Widget _buildGoalInviteTile(GoalResponse goal, GoalProvider prov, int myId) => Card(
-    elevation: 0, color: const Color(0xFFF8FAFC), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-    child: ListTile(
-      title: Text(goal.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-      subtitle: const Text("Приглашение в команду"),
-      trailing: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy), onPressed: () => prov.respondToGoalInvite(goal.id, true, myId), child: const Text("ПРИНЯТЬ", style: TextStyle(color: Colors.white, fontSize: 10))),
-    ),
-  );
+  Widget _buildPartnerRequestTile(ChatRequestDto req) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.blue.withOpacity(0.2)),
+        boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.05), blurRadius: 10)],
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 22,
+            backgroundImage: req.senderAvatar != null ? MemoryImage(base64Decode(req.senderAvatar!)) : null,
+            child: req.senderAvatar == null ? const Icon(Icons.person) : null,
+          ),
+          const SizedBox(width: 15),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(req.senderName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                const Text("Хочет стать напарником", style: TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: () => context.read<UserProvider>().acceptChatRequest(req.id),
+            icon: const Icon(Icons.check_circle, color: Colors.green, size: 30),
+          ),
+          IconButton(
+            onPressed: () => context.read<UserProvider>().declineChatRequest(req.id),
+            icon: const Icon(Icons.cancel, color: Colors.redAccent, size: 30),
+          ),
+        ],
+      ),
+    );
+  }
 
-  Widget _buildEmpty() => const Center(child: Padding(padding: EdgeInsets.all(40), child: Text("Уведомлений нет", style: TextStyle(color: Colors.grey))));
+  Widget _buildGoalInviteTile(GoalResponse goal, GoalProvider prov, int myId) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.orange.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.orange.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome, color: Colors.orange, size: 20),
+              const SizedBox(width: 10),
+              Text(goal.title.toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 0.5)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(goal.description ?? "Вас пригласили в совместный путь обучения.", style: const TextStyle(fontSize: 14, color: AppColors.navy)),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy),
+                  onPressed: () => prov.respondToGoalInvite(goal.id, true, myId, context),
+                  child: const Text("ПРИНЯТЬ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent)),
+                  onPressed: () => prov.respondToGoalInvite(goal.id, false, myId, context),
+                  child: const Text("ОТКАЗ", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          )
+        ],
+      ),
+    );
+  }
+
+void _handleNotificationClick(AppNotification n) async {
+  final taskProv = context.read<TaskProvider>();
+  final eventProv = context.read<EventProvider>();
+  final groupProv = context.read<GroupProvider>();
+
+  // Пытаемся получить ID объекта из поля data
+  final int? entityId = int.tryParse(n.data ?? '');
+  DateTime? jumpDate;
+
+  // --- ЛОГИКА 1: ПРЫЖОК В КАЛЕНДАРЬ (ПЕРЕНОС ДАТЫ) ---
+
+  // 1. Если это просроченная личная задача
+  if (n.type == "TaskOverdue" && entityId != null) {
+    final task = taskProv.tasks.where((t) => t.id == entityId).firstOrNull;
+    if (task != null) {
+      jumpDate = task.dueDate;
+    }
+  } 
+  // 2. Если это просроченное задание из чата (Roadmap)
+  else if (n.type == "RoadmapOverdue" && entityId != null) {
+    final step = groupProv.allRoadmapSteps.where((s) => s.id == entityId).firstOrNull;
+    if (step != null) {
+      jumpDate = step.dueDate;
+    }
+  }
+  // 3. Если это просроченное событие
+  else if (n.type == "EventOverdue" && entityId != null) {
+    final event = eventProv.events.where((e) => e.id == entityId).firstOrNull;
+    if (event != null) {
+      jumpDate = event.eventDate;
+    }
+  }
+
+  // Если мы нашли дату просроченного объекта — закрываем уведомления и возвращаем дату
+  // Layout (главная страница) поймает эту дату и вызовет jumpToDate
+  if (jumpDate != null) {
+    Navigator.pop(context, jumpDate);
+    return;
+  }
+
+  // --- ЛОГИКА 2: ПЕРЕХОД В ЧАТ (ДЛЯ ПРАВОК И ПРОВЕРОК) ---
+
+  if ((n.type == "TaskReview" || n.type == "TaskRejected" || n.type == "TaskSubmission") && n.roadmapStepId != null) {
+    // Ищем шаг, чтобы узнать ID группы (чата)
+    final step = groupProv.allRoadmapSteps.where((s) => s.id == n.roadmapStepId).firstOrNull;
+
+    if (step != null) {
+      final group = groupProv.groups.where((g) => g.id == step.groupId).firstOrNull;
+      if (group != null) {
+        Navigator.pop(context); // Закрываем модальное окно уведомлений
+        Navigator.push(
+          context, 
+          MaterialPageRoute(builder: (_) => ChatScreen(group: group))
+        );
+        return;
+      }
+    }
+  }
+
+  // --- ЛОГИКА 3: ОБРАБОТКА СТАРЫХ УВЕДОМЛЕНИЙ (Fallback) ---
+  // Если в data все еще лежит строка с датой (на случай старых записей в БД)
+  if (n.data != null && n.data!.contains('-') && n.data!.length > 10) {
+    try {
+      DateTime legacyDate = DateTime.parse(n.data!);
+      Navigator.pop(context, legacyDate);
+      return;
+    } catch (_) {}
+  }
+
+  // Если ничего не подошло — просто закрываем окно
+  Navigator.pop(context);
+}
+
+  Widget _buildEmpty() => const Center(
+        child: Padding(
+          padding: EdgeInsets.only(top: 100),
+          child: Column(
+            children: [
+              Icon(Icons.notifications_off_outlined, size: 60, color: Color(0xFFE2E8F0)),
+              SizedBox(height: 15),
+              Text("У вас пока нет уведомлений", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ),
+      );
 }

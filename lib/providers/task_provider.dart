@@ -37,56 +37,82 @@ class TaskProvider extends ChangeNotifier {
     }
   }
 
-  
+  // *** ИСПРАВЛЕННЫЙ МЕТОД: Принимает GoalProvider как параметр ***
+  void cleanupOrphanedTasks(GoalProvider goalProv) {
+    try {
+      if (goalProv.goals.isNotEmpty) {
+        final activeGoalIds = goalProv.goals.map((g) => g.id).toSet();
+        
+        final beforeCount = _tasks.length;
+        _tasks.removeWhere((t) => !activeGoalIds.contains(t.goalId));
+        final afterCount = _tasks.length;
+        
+        if (beforeCount != afterCount) {
+          debugPrint("TaskProvider: Removed ${beforeCount - afterCount} orphaned tasks");
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      debugPrint("TaskProvider cleanup error: $e");
+    }
+  }
+
+  void removeTasksForGoal(int goalId) {
+    final beforeCount = _tasks.length;
+    _tasks.removeWhere((t) => t.goalId == goalId);
+    final afterCount = _tasks.length;
+    
+    if (beforeCount != afterCount) {
+      debugPrint("TaskProvider: Removed ${beforeCount - afterCount} tasks for goal $goalId");
+      notifyListeners();
+    }
+  }
 
   Future<void> loadTasks(int goalId) async {
-    if (goalId == 0) return;
     _isLoading = true;
     _safeNotify();
     try {
-      final fetchedTasks = await _taskService.getTasksForGoal(goalId);
-      _tasks = fetchedTasks;
+      final response = await _api.dio.get("/Tasks/goal/$goalId");
+      if (response.statusCode == 200) {
+        final List<dynamic> data = response.data as List;
+        final newTasks = data.map((json) => TaskResponse.fromJson(json)).toList();
+        
+        // 1. Удаляем из общего кэша старые задачи ТОЛЬКО этой цели
+        _tasks.removeWhere((t) => t.goalId == goalId);
+        // 2. Добавляем свежие
+        _tasks.addAll(newTasks);
+      }
+    } catch (e) {
+      debugPrint("TaskProvider Error: $e");
     } finally {
       _isLoading = false;
       _safeNotify();
     }
   }
 
-// lib/providers/task_provider.dart
+  Future<bool> updateTaskDate(int taskId, DateTime newDate, GoalProvider goalProv) async {
+    final safeDate = _toSafeUtc(newDate);
+    try {
+      final response = await _api.dio.patch("/Tasks/$taskId/reschedule", data: {
+        "newDate": safeDate.toIso8601String()
+      });
 
-// lib/providers/task_provider.dart
-
-Future<bool> updateTaskDate(int taskId, DateTime newDate, GoalProvider goalProv) async {
-  // 1. Убираем влияние часового пояса, устанавливая время на ПОЛДЕНЬ (12:00)
-  // Это гарантирует, что при любом сдвиге UTC (до +-12 часов) дата останется той же
-  final safeDate = DateTime(newDate.year, newDate.month, newDate.day, 12, 0, 0);
-
-  try {
-    // Отправляем на сервер строго в формате UTC
-    final response = await _api.dio.patch("/Tasks/$taskId/reschedule", data: {
-      "newDate": safeDate.toUtc().toIso8601String()
-    });
-
-    if (response.statusCode == 200) {
-      int idx = _tasks.indexWhere((t) => t.id == taskId);
-      if (idx != -1) {
-        // Сохраняем дату в локальном состоянии (тоже как «чистую» дату без времени)
-        final updatedTask = _tasks[idx].copyWith(
-          dueDate: DateTime(newDate.year, newDate.month, newDate.day)
-        );
-        _tasks[idx] = updatedTask;
-        
-        goalProv.syncTaskInGoal(updatedTask.goalId, updatedTask);
-        
-        _safeNotify();
-        return true;
+      if (response.statusCode == 200) {
+        int idx = _tasks.indexWhere((t) => t.id == taskId);
+        if (idx != -1) {
+          _tasks[idx] = _tasks[idx].copyWith(
+            dueDate: DateTime(newDate.year, newDate.month, newDate.day)
+          );
+          goalProv.syncTaskInGoal(_tasks[idx].goalId, _tasks[idx]);
+          _safeNotify();
+          return true;
+        }
       }
+    } catch (e) { 
+      debugPrint(e.toString()); 
     }
-  } catch (e) {
-    debugPrint("DEBUG [TaskProvider] Reschedule ERROR: $e");
+    return false;
   }
-  return false;
-}
 
   Future<void> updateTask({
     required int taskId, 
@@ -143,12 +169,19 @@ Future<bool> updateTaskDate(int taskId, DateTime newDate, GoalProvider goalProv)
     await _taskService.updateTaskStatus(taskId, newStatus, comment);
   }
 
-  // Остальные вспомогательные методы
-  double getProgress(String myUsername) {
-    if (_tasks.isEmpty) return 0.0;
-    int doneCount = _tasks.where((t) => t.completions.any((c) => c.username == myUsername)).length;
-    return (doneCount / _tasks.length) * 100;
-  }
+double getProgress(String myUsername, {int? goalId}) {
+  // Фильтруем задачи: если goalId передан, берем только задачи этой цели
+  List<TaskResponse> targetTasks = goalId != null 
+      ? _tasks.where((t) => t.goalId == goalId).toList() 
+      : _tasks;
+
+  if (targetTasks.isEmpty) return 0.0;
+  
+  int doneCount = targetTasks
+      .where((t) => t.completions.any((c) => c.username == myUsername))
+      .length;
+  return (doneCount / targetTasks.length) * 100;
+}
 
   void clearData() {
     _tasks = [];
@@ -161,12 +194,29 @@ Future<bool> updateTaskDate(int taskId, DateTime newDate, GoalProvider goalProv)
     if (success) await loadAllTasks(); 
   }
 
-  Future<void> deleteTask(int taskId, int goalId) async {
-    bool success = await _taskService.deleteTask(taskId);
-    if (success) {
-      _tasks.removeWhere((t) => t.id == taskId);
-      _safeNotify();
-    }
+Future<void> deleteTask(int taskId, int goalId, GoalProvider goalProv) async {
+  // 1. Сначала удаляем из глобального кэша задач
+  _tasks.removeWhere((t) => t.id == taskId);
+  
+  // 2. СРАЗУ удаляем из внутреннего списка задач цели в GoalProvider
+  goalProv.removeTaskFromGoal(goalId, taskId);
+  
+  // 3. Уведомляем UI (теперь графики и списки увидят изменения одновременно)
+  notifyListeners();
+
+  try {
+    // 4. Отправляем на сервер
+    await _api.dio.delete("/Tasks/$taskId");
+  } catch (e) {
+    debugPrint("Ошибка удаления на сервере: $e");
+    // В случае ошибки возвращаем данные (делаем reload)
+    await loadTasks(goalId);
+    await goalProv.loadGoals(goalProv.goals.first.userId);
+  }
+}
+
+    List<TaskResponse> getTasksByGoal(int goalId) {
+    return _tasks.where((t) => t.goalId == goalId).toList();
   }
 
   Future<void> addComment(int taskId, String text) async {
@@ -179,6 +229,10 @@ Future<bool> updateTaskDate(int taskId, DateTime newDate, GoalProvider goalProv)
         _safeNotify();
       }
     }
+  }
+
+  DateTime _toSafeUtc(DateTime localDate) {
+    return DateTime.utc(localDate.year, localDate.month, localDate.day, 12, 0, 0);
   }
 
   Future<void> deleteComment(int taskId, int commentId) async {

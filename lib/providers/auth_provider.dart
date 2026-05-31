@@ -1,4 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:hive_app/providers/event_provider.dart';
+import 'package:hive_app/providers/goal_provider.dart';
+import 'package:hive_app/providers/group_provider.dart';
+import 'package:hive_app/providers/notification_provider.dart';
+import 'package:hive_app/providers/task_provider.dart';
+import 'package:hive_app/providers/user_provider.dart';
+import 'package:provider/provider.dart';
 import '../models/all_models.dart';
 import '../services/auth_service.dart';
 
@@ -60,18 +67,25 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  // ВЫХОД (Логаут)
-  Future<void> logout(BuildContext context) async {
-    try {
-      await _authService.logout(); // Очистка токена в сервисе/памяти
-    } catch (e) {
-      debugPrint("Error during service logout: $e");
-    }
-    
-    _token = null;
-    _user = null;
-    notifyListeners(); // Сообщаем приложению, что пользователь вышел
-  }
+Future<void> logout(BuildContext context) async {
+  // 1. Очищаем данные во всех провайдерах немедленно
+  context.read<UserProvider>().clearData();
+  context.read<TaskProvider>().clearData();
+  context.read<GoalProvider>().clearData();
+  context.read<EventProvider>().clearData();
+  context.read<NotificationProvider>().clearData();
+  context.read<GroupProvider>().clearData();
+
+  // 2. Вызываем сервис логаута (удаление токена из памяти)
+  try {
+    await _authService.logout();
+  } catch (e) { debugPrint(e.toString()); }
+  
+  _token = null;
+  _user = null;
+  
+  notifyListeners(); // Гнать UI на экран входа
+}
 
   // Завершение авторизации (если нужно просто обновить UI)
   void completeAuth() {

@@ -11,7 +11,8 @@ import '../services/chat_service.dart';
 class GroupProvider extends ChangeNotifier {
   final ApiClient _api = ApiClient();
   final ChatService _chatService = ChatService();
-
+  Set<int> _myPinnedMessages = {}; // Храним ID локально закрепленных сообщений
+  Set<int> get myPinnedMessages => _myPinnedMessages;
   // --- СОСТОЯНИЕ (STATE) ---
   List<GroupResponse> _groups = [];
   List<MessageDto> _messages = [];
@@ -47,6 +48,16 @@ class GroupProvider extends ChangeNotifier {
     }
   }
 
+
+  void toggleLocalPin(int messageId) {
+  if (_myPinnedMessages.contains(messageId)) {
+    _myPinnedMessages.remove(messageId);
+  } else {
+    _myPinnedMessages.add(messageId);
+  }
+  notifyListeners();
+}
+
   /// Создание чата один-на-один
   Future<int?> startDirectChat(int targetUserId) async {
     try {
@@ -63,43 +74,49 @@ class GroupProvider extends ChangeNotifier {
 
   // --- ЧАТ (SIGNALR И СООБЩЕНИЯ) ---
 
-Future<void> openChat(int groupId) async {
+Future<void> openChat(int groupId, int myId) async { // Добавили myId
   _activeGroupId = groupId;
   _messages = [];
   _roadmapSteps = [];
   
-  // Не вызываем notifyListeners() здесь
-  // notifyListeners(); // УБИРАЕМ ЭТУ СТРОКУ
-  
   try {
+    await _api.dio.post("/Chat/$groupId/read-all");
+    loadGroups(); 
     await loadMessages(groupId);
-  } catch (e) {
-    debugPrint("Error loading messages: $e");
-  }
-  
-  try {
     await loadRoadmap(groupId);
+    
+    await _chatService.initSignalR(
+      groupId, 
+      (newMessage) {
+        if (!_messages.any((m) => m.id == newMessage.id)) {
+          _messages.add(newMessage); 
+          notifyListeners(); 
+          
+          // ТЕПЕРЬ ОШИБКИ НЕ БУДЕТ: используем переданный myId
+          if (_activeGroupId == groupId && newMessage.senderId != myId) {
+             _api.dio.post("/Chat/$groupId/read-all");
+          }
+        }
+      },
+      () => loadRoadmap(groupId),
+    );
   } catch (e) {
-    debugPrint("Error loading roadmap: $e");
-  }
-  
-  try {
-    await _chatService.initSignalR(groupId, (newMessage) {
-      if (!_messages.any((m) => m.id == newMessage.id)) {
-        _messages.add(newMessage);
-        notifyListeners();
-      }
-    });
-  } catch (e) {
-    debugPrint("Error connecting to SignalR: $e");
+    debugPrint("Error: $e");
   }
 }
+
 
   /// Выход из чата
   void closeChat(int groupId) {
     _chatService.stopConnection(groupId);
     _activeGroupId = null;
   }
+
+
+  DateTime _toSafeUtc(DateTime localDate) {
+  // Устанавливаем полдень (12:00), чтобы при любом сдвиге UTC дата осталась той же
+  return DateTime.utc(localDate.year, localDate.month, localDate.day, 12, 0, 0);
+}
 
   /// Загрузка истории сообщений
   Future<void> loadMessages(int groupId) async {
@@ -115,26 +132,22 @@ Future<void> openChat(int groupId) async {
   }
 
   /// Отправка сообщения
-  Future<void> sendMessage(int groupId, String content) async {
-    if (content.trim().isEmpty) return;
-    try {
-      // Сервер возвращает DTO созданного сообщения
-      final response = await _api.dio.post("/Chat/send", data: {
-        "groupId": groupId, 
-        "content": content
-      });
-      
-      if (response.statusCode == 200) {
-        final newMsg = MessageDto.fromJson(response.data);
-        if (!_messages.any((m) => m.id == newMsg.id)) {
-          _messages.add(newMsg);
-          notifyListeners();
-        }
-      }
-    } catch (e) {
-      debugPrint("GroupProvider Error [sendMessage]: $e");
-    }
+Future<void> sendMessage(int groupId, String content) async {
+  if (content.trim().isEmpty) return;
+  try {
+    // 1. Просто отправляем на сервер
+    await _api.dio.post("/Chat/send", data: {
+      "groupId": groupId, 
+      "content": content
+    });
+    
+    // МЫ НЕ ДОБАВЛЯЕМ здесь сообщение в список. 
+    // Если SignalR живой, он пришлет его в метод initSignalR через секунду.
+    
+  } catch (e) {
+    debugPrint("Ошибка отправки: $e");
   }
+}
 
   // --- ПЛАН ОБУЧЕНИЯ (ROADMAP) ---
 
@@ -307,24 +320,21 @@ Future<String?> uploadFileToServer(PlatformFile file) async {
   }
 
 
+// В GroupProvider добавить метод:
 Future<void> finalizeTestResult(int stepId, int groupId) async {
   try {
-    await _api.dio.post(
+    final response = await _api.dio.post(
       "/Chat/roadmap/finalize-test", 
-      data: {
-        "stepId": stepId  // Отправляем как JSON объект, а не просто число
-      },
-      options: Options(
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      ),
+      data: {"stepId": stepId}, // Отправляем как Map (превратится в JSON)
     );
-    await loadRoadmap(groupId);
-    await loadAllRoadmaps();
+
+    if (response.statusCode == 200) {
+      // Мы не ждем сигнала сокета для себя, а обновляем данные сразу
+      await loadRoadmap(groupId);
+      await loadAllRoadmaps();
+    }
   } catch (e) {
-    debugPrint("Error finalizeTest: $e");
-    rethrow;
+    debugPrint("Error finalizing test: $e");
   }
 }
 
@@ -332,23 +342,25 @@ Future<void> finalizeTestResult(int stepId, int groupId) async {
 
 Future<void> toggleStepComplete(int stepId, int groupId) async {
   try {
-    await _api.dio.post(
+    // Отправляем запрос на сервер. 
+    // На бэкенде метод ToggleComplete (который вы присылали ранее) 
+    // уже умеет менять статус с Done на ToDo и обратно.
+    final response = await _api.dio.post(
       "/Chat/roadmap/toggle-complete", 
-      data: {
-        "stepId": stepId  // Отправляем как JSON объект
-      },
-      options: Options(
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      ),
+      data: {"stepId": stepId},
     );
-    await loadRoadmap(groupId);
-    await loadAllRoadmaps();
+
+    if (response.statusCode == 200) {
+      // Обновляем данные локально, чтобы изменения отобразились везде
+      await loadRoadmap(groupId);
+      await loadAllRoadmaps(); // Обновляем данные для главной страницы тоже
+      notifyListeners();
+    }
   } catch (e) {
     debugPrint("Error toggleStep: $e");
   }
 }
+
 
     Future<void> addStepComment(int stepId, String text, int groupId) async {
     await _api.dio.post("/Chat/roadmap/comment", data: {"stepId": stepId, "text": text});
@@ -463,31 +475,6 @@ Future<void> _diagnoseEndpoints() async {
   print('===============================\n');
 }
 
-// Вспомогательный метод для определения MIME типа
-String _getMimeType(String fileName) {
-  final extension = fileName.split('.').last.toLowerCase();
-  switch (extension) {
-    case 'jpg':
-    case 'jpeg':
-      return 'image/jpeg';
-    case 'png':
-      return 'image/png';
-    case 'pdf':
-      return 'application/pdf';
-    case 'doc':
-      return 'application/msword';
-    case 'docx':
-      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-    case 'zip':
-      return 'application/zip';
-    case 'rar':
-      return 'application/x-rar-compressed';
-    case 'txt':
-      return 'text/plain';
-    default:
-      return 'application/octet-stream';
-  }
-}
 
 // Добавьте новый метод для загрузки файлов в чат (если нужно):
 Future<void> uploadChatFile(int groupId) async {
@@ -549,8 +536,7 @@ Future<void> uploadChatFile(int groupId) async {
         data: {
           "groupId": groupId,
           "content": content,
-          "dueDate": dueDate.toUtc().toIso8601String(),
-          "instructionUrl": instructionUrl,
+"dueDate": _toSafeUtc(dueDate).toIso8601String(),          "instructionUrl": instructionUrl,
           "isTest": true,
           "isRequired": isRequired,
           "maxAttempts": maxAttempts
@@ -576,38 +562,66 @@ Future<void> uploadChatFile(int groupId) async {
     }
   }
 
-  // Обновленный метод добавления обычного шага (чтобы точно сохранялось)
-  Future<void> addRoadmapStep({
-    required int groupId,
-    required String content,
-    required DateTime date,
-    String? instructionUrl,
-    bool isTest = false,
-    bool isRequired = true,
-    int maxAttempts = 3,
-  }) async {
-    try {
-      await _api.dio.post(
-        "/Chat/roadmap", 
-        data: {
-          "groupId": groupId,
-          "content": content,
-          "dueDate": date.toUtc().toIso8601String(),
-          "instructionUrl": instructionUrl,
-          "isTest": isTest,
-          "isRequired": isRequired,
-          "maxAttempts": maxAttempts
-        },
-        options: Options(contentType: "application/json"),
-      );
-      await loadRoadmap(groupId);
-      await loadAllRoadmaps();
-    } catch (e) {
-      debugPrint("Ошибка addRoadmapStep: $e");
-    }
-  }
-  // --- КОММЕНТАРИИ К ШАГАМ (ОБЩЕНИЕ) ---
+// Метод создания обычного шага
+Future<void> addRoadmapStep({
+  required int groupId,
+  required String content,
+  required DateTime date,
+  String? instructionUrl,
+  bool isTest = false,
+  bool isRequired = true,
+}) async {
+  try {
+    await _api.dio.post("/Chat/roadmap", data: {
+      "groupId": groupId,
+      "content": content,
+      "dueDate": _toSafeUtc(date).toIso8601String(), // ФИКС
+      "instructionUrl": instructionUrl,
+      "isTest": isTest,
+      "isRequired": isRequired,
+    });
+    await loadRoadmap(groupId);
+    await loadAllRoadmaps();
+  } catch (e) { debugPrint(e.toString()); }
+}
 
+// НОВЫЙ МЕТОД: Редактирование задания (только для учителя)
+Future<void> updateRoadmapStep({
+  required int stepId,
+  required int groupId,
+  required String content,
+  required DateTime date,
+  required bool isRequired,
+  String? instructionUrl,
+}) async {
+  try {
+    await _api.dio.put("/Chat/roadmap/$stepId", data: {
+      "content": content,
+      "dueDate": _toSafeUtc(date).toIso8601String(), // ФИКС
+      "isRequired": isRequired,
+      "instructionUrl": instructionUrl,
+    });
+    await loadRoadmap(groupId);
+    await loadAllRoadmaps();
+  } catch (e) { debugPrint("Ошибка обновления RoadmapStep: $e"); }
+}
+
+
+// В классе GroupProvider добавьте или обновите этот метод:
+Future<void> completeSimpleTask(int stepId, int groupId) async {
+  try {
+    // Вызываем toggle-complete, который на бэкенде сразу ставит статус Done
+    await _api.dio.post(
+      "/Chat/roadmap/toggle-complete", 
+      data: {"stepId": stepId},
+    );
+    // Обновляем данные, чтобы на экране сразу всё изменилось
+    await loadRoadmap(groupId);
+    await loadAllRoadmaps();
+  } catch (e) {
+    debugPrint("Ошибка завершения простой задачи: $e");
+  }
+}
 
 // Обновленный метод в GroupProvider
 Future<void> submitTestResult(int stepId, double score, int groupId, String answersJson) async {
@@ -666,26 +680,55 @@ Future<void> submitTestAttempt(int stepId, double score, String answersJson, int
 
 
 
-  // --- СООБЩЕНИЯ И ПИНЫ ---
+Future<void> togglePinMessage(int messageId, bool pin, int groupId) async {
+  try {
+    // 1. Отправляем запрос на сервер
+    final response = await _api.dio.post("/Chat/messages/$messageId/pin?pin=$pin");
+    
+    if (response.statusCode == 200) {
+      // 2. ОЧЕНЬ ВАЖНО: Обновляем состояние локально
+      // Сначала снимаем закреп со всех сообщений (если в чате может быть только один закреп)
+      for (var i = 0; i < _messages.length; i++) {
+        if (pin == true) {
+          _messages[i] = _messages[i].copyWith(isPinned: false);
+        }
+      }
 
-  Future<void> togglePinMessage(int messageId, bool pin, int groupId) async {
-    try {
-      await _api.dio.post("/Chat/messages/$messageId/pin?pin=$pin");
-      await loadMessages(groupId);
-    } catch (e) {
-      debugPrint("Error [togglePin]: $e");
+      // 3. Находим нужное сообщение и меняем ему статус
+      final idx = _messages.indexWhere((m) => m.id == messageId);
+      if (idx != -1) {
+        _messages[idx] = _messages[idx].copyWith(isPinned: pin);
+        debugPrint("Сообщение $messageId теперь pinned=$pin");
+      }
+      
+      // 4. Уведомляем UI об изменениях
+      notifyListeners();
     }
+  } catch (e) {
+    debugPrint("Ошибка закрепа в провайдере: $e");
   }
+}
 
   Future<void> deleteMessage(int messageId) async {
-    try {
-      await _api.dio.delete("/Chat/messages/$messageId");
-      _messages.removeWhere((m) => m.id == messageId);
-      notifyListeners();
-    } catch (e) {
-      debugPrint("Error [deleteMessage]: $e");
-    }
+  try {
+    await _api.dio.delete("/Chat/messages/$messageId");
+    _messages.removeWhere((m) => m.id == messageId);
+    _myPinnedMessages.remove(messageId); // Удаляем и из локальных закрепов
+    notifyListeners();
+  } catch (e) {
+    debugPrint("Error [deleteMessage]: $e");
   }
+}
+
+// В классе GroupProvider добавьте этот геттер:
+MessageDto? get pinnedMessage {
+  // Ищем последнее сообщение, у которого isPinned == true
+  try {
+    return _messages.lastWhere((m) => m.isPinned);
+  } catch (e) {
+    return null; // Если закрепов нет
+  }
+}
 
   /// Полная очистка при выходе
   void clearData() {

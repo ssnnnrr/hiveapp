@@ -10,7 +10,7 @@ class NotificationProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   List<AppNotification> get notifications => _notifications;
 
-  Future<void> loadNotifications() async {
+Future<void> loadNotifications() async {
     _isLoading = true;
     notifyListeners();
     try {
@@ -19,10 +19,16 @@ class NotificationProvider extends ChangeNotifier {
         final List fetched = response.data;
         final all = fetched.map((e) => AppNotification.fromJson(e)).toList();
         
-        // КЛИЕНТСКАЯ ДЕДУПЛИКАЦИЯ: Убираем повторы
+        // УЛУЧШЕННАЯ ДЕДУПЛИКАЦИЯ: фильтруем по заголовку, сообщению и ID задачи
         final Map<String, AppNotification> uniqueMap = {};
         for (var n in all) {
-          uniqueMap["${n.type}_${n.title}_${n.message}"] = n;
+          // Создаем уникальный ключ на основе контента
+          final contentKey = "${n.title}_${n.message}_${n.taskId}_${n.roadmapStepId}";
+          
+          // Если уведомление с таким смыслом уже есть, оставляем более новое (по id или дате)
+          if (!uniqueMap.containsKey(contentKey)) {
+            uniqueMap[contentKey] = n;
+          }
         }
         
         _notifications = uniqueMap.values.toList()
@@ -34,7 +40,61 @@ class NotificationProvider extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
-  }
+}
+void syncOverdueNotifications({
+  required List<TaskResponse> tasks,
+  required List<EventResponse> events,
+  required List<RoadmapStepDto> roadmapSteps,
+}) {
+  final now = DateTime.now();
+  final todayStart = DateTime(now.year, now.month, now.day);
+  bool changed = false;
+
+  _notifications.removeWhere((n) {
+    final int? entityId = int.tryParse(n.data ?? '');
+    if (entityId == null) return false;
+
+    // Сравнение для Шагов к цели
+    if (n.type == "TaskOverdue") {
+      final task = tasks.where((t) => t.id == entityId).firstOrNull;
+      if (task != null) {
+        bool isDone = task.status == "Done" || task.completions.isNotEmpty;
+        bool isNotOverdue = !task.dueDate.toLocal().isBefore(todayStart);
+        if (isDone || isNotOverdue) return true;
+      } else { return true; }
+    }
+
+    // Сравнение для Событий (минута в минуту)
+    if (n.type == "EventOverdue") {
+      final event = events.where((e) => e.id == entityId).firstOrNull;
+      if (event != null) {
+        bool isNotOverdue = !event.eventDate.toLocal().isBefore(now);
+        if (event.isCompleted || isNotOverdue) return true;
+      } else { return true; }
+    }
+
+    // Сравнение для Заданий чата
+    if (n.type == "RoadmapOverdue") {
+      final step = roadmapSteps.where((s) => s.id == entityId).firstOrNull;
+      if (step != null) {
+        bool isHandled = step.status == "Done" || step.status == "UnderReview";
+        bool isNotOverdue = !step.dueDate.toLocal().isBefore(todayStart);
+        if (isHandled || isNotOverdue) return true;
+      } else { return true; }
+    }
+
+    return false;
+  });
+
+  notifyListeners();
+}
+
+
+void clearData() {
+  _notifications = [];
+  _isLoading = false;
+  notifyListeners();
+}
 
   Future<void> markAsRead(int id) async {
     try {
@@ -58,8 +118,6 @@ class NotificationProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-
-  // В NotificationProvider (lib/providers/notification_provider.dart)
 
 // В класс NotificationProvider добавим:
 void removeOverdueNotification(int itemId, String type) {
