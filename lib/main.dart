@@ -55,7 +55,7 @@ class HiveApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'HIVE',
+      title: 'хайв',
       // --- ДОБАВЬ ЭТИ СТРОКИ ---
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,

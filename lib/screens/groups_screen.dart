@@ -102,7 +102,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 15, offset: const Offset(0, 5))],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.03), blurRadius: 15, offset: const Offset(0, 5))],
       ),
       child: TextField(
         controller: _searchCtrl,
@@ -127,8 +127,8 @@ class _GroupsScreenState extends State<GroupsScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
-        border: Border.all(color: hasUnread ? AppColors.primary.withOpacity(0.1) : Colors.transparent),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.02), blurRadius: 10, offset: const Offset(0, 4))],
+        border: Border.all(color: hasUnread ? AppColors.primary.withValues(alpha:0.1) : Colors.transparent),
       ),
       child: Material(
         color: Colors.transparent,
@@ -149,7 +149,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                       width: 58, height: 58,
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
-                          colors: [AppColors.navy, AppColors.navy.withOpacity(0.7)],
+                          colors: [AppColors.navy, AppColors.navy.withValues(alpha:0.7)],
                           begin: Alignment.topLeft, end: Alignment.bottomRight,
                         ),
                         borderRadius: BorderRadius.circular(20),
@@ -225,7 +225,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.forum_outlined, size: 70, color: Colors.grey.withOpacity(0.2)),
+          Icon(Icons.forum_outlined, size: 70, color: Colors.grey.withValues(alpha:0.2)),
           const SizedBox(height: 20),
           const Text("Пока нет обсуждений", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 5),

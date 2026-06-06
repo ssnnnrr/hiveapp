@@ -108,9 +108,9 @@ class MainDashboardLayout extends StatelessWidget {
           height: 85,
           padding: const EdgeInsets.symmetric(horizontal: 40),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.8),
+            color: Colors.white.withValues(alpha:0.8),
             border: Border(
-              bottom: BorderSide(color: AppColors.navy.withOpacity(0.06), width: 1),
+              bottom: BorderSide(color: AppColors.navy.withValues(alpha:0.06), width: 1),
             ),
           ),
           child: Row(
@@ -124,7 +124,7 @@ class MainDashboardLayout extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(5),
                 decoration: BoxDecoration(
-                  color: AppColors.navy.withOpacity(0.04),
+                  color: AppColors.navy.withValues(alpha:0.04),
                   borderRadius: BorderRadius.circular(18),
                 ),
                 child: Row(
@@ -150,34 +150,48 @@ class MainDashboardLayout extends StatelessWidget {
     );
   }
 
-  Widget _buildBranding() {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            gradient: navigationGradient,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(color: const Color(0xFF003385).withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 4))
-            ],
+// lib/widgets/main_dashboard_layout.dart
+
+Widget _buildBranding() {
+  return Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      // Ваша существующая иконка с гексагоном
+      Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF003385), Color(0xFF4A8DE9)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-          child: const Icon(Icons.hexagon_rounded, color: Colors.white, size: 24),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF003385).withValues(alpha: 0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 4)
+            )
+          ],
         ),
-        const SizedBox(width: 14),
-        Text(
-          "HIVE",
-          style: GoogleFonts.orbitron(
-            color: AppColors.navy,
-            fontWeight: FontWeight.w900,
-            fontSize: 22,
-            letterSpacing: 4,
-          ),
+        child: const Icon(Icons.hexagon_rounded, color: Colors.white, size: 24),
+      ),
+      const SizedBox(width: 14),
+      
+      // ИСПРАВЛЕННЫЙ ТЕКСТ "хайв"
+      Text(
+        "хайв",
+        style: GoogleFonts.manrope( // Используем Manrope
+          color: const Color(0xFF023E8A), // Ваш основной темно-синий цвет
+          fontWeight: FontWeight.w800,   // Жирное начертание (ExtraBold)
+          fontSize: 24,                  // Размер шрифта
+          letterSpacing: -0.5,           // Отрицательное расстояние делает надпись плотной и современной
+          height: 1.0,                   // Центрирование по вертикали
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
 
   Widget _buildActionArea(BuildContext context, profile, bool hasNotif) {
     return Row(
@@ -194,8 +208,8 @@ class MainDashboardLayout extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: AppColors.navy.withOpacity(0.08)),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 8)],
+            border: Border.all(color: AppColors.navy.withValues(alpha:0.08)),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.02), blurRadius: 8)],
           ),
           child: Row(
             children: [
@@ -240,7 +254,7 @@ class MainDashboardLayout extends StatelessWidget {
         IconButton(
           icon: Icon(
             hasNotif ? Icons.notifications_active_rounded : Icons.notifications_none_rounded,
-            color: hasNotif ? AppColors.nectarGold : AppColors.navy.withOpacity(0.4),
+            color: hasNotif ? AppColors.nectarGold : AppColors.navy.withValues(alpha:0.4),
             size: 26,
           ),
           onPressed: () => _openNotifications(context, true),
@@ -285,7 +299,7 @@ class MainDashboardLayout extends StatelessWidget {
             color: isSelected ? Colors.white : Colors.transparent,
             borderRadius: BorderRadius.circular(14),
             boxShadow: isSelected ? [
-              BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))
+              BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 8, offset: const Offset(0, 2))
             ] : [],
           ),
           child: Row(
@@ -293,13 +307,13 @@ class MainDashboardLayout extends StatelessWidget {
               Icon(
                 icon,
                 size: 19,
-                color: isSelected ? AppColors.primary : AppColors.navy.withOpacity(0.4),
+                color: isSelected ? AppColors.primary : AppColors.navy.withValues(alpha:0.4),
               ),
               const SizedBox(width: 8),
               Text(
                 label,
                 style: TextStyle(
-                  color: isSelected ? AppColors.navy : AppColors.navy.withOpacity(0.5),
+                  color: isSelected ? AppColors.navy : AppColors.navy.withValues(alpha:0.5),
                   fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
                   fontSize: 14,
                 ),
@@ -316,7 +330,7 @@ class MainDashboardLayout extends StatelessWidget {
     return AppBar(
       backgroundColor: Colors.white,
       elevation: 0.5,
-      title: Text("HIVE", style: GoogleFonts.orbitron(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy)),
+      title: Text("ХАЙВ", style: GoogleFonts.orbitron(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy)),
       actions: [
         IconButton(
           icon: Icon(Icons.notifications_none_rounded, color: hasNotif ? Colors.amber : Colors.grey),
@@ -386,9 +400,10 @@ class MainDashboardLayout extends StatelessWidget {
     }
   }
 
-  static void showHiveDialog(BuildContext context, Widget content) {
+  // Изменили void на Future и добавили return
+  static Future<void> showHiveDialog(BuildContext context, Widget content) {
     double width = MediaQuery.of(context).size.width;
-    showDialog(
+    return showDialog( // Добавили return
       context: context,
       builder: (ctx) => Center(
         child: ConstrainedBox(

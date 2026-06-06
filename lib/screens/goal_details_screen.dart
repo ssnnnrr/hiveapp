@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_app/screens/main_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -122,7 +123,7 @@ class _GoalDetailsScreenState extends State<GoalDetailsScreen>
   Widget _userAvatar(String? url, String name, {double radius = 12}) {
     return CircleAvatar(
       radius: radius,
-      backgroundColor: AppColors.navy.withOpacity(0.1),
+      backgroundColor: AppColors.navy.withValues(alpha:0.1),
       backgroundImage: (url != null && url.isNotEmpty)
           ? MemoryImage(base64Decode(url))
           : null,
@@ -316,7 +317,7 @@ Widget _buildMobileDashboard(
               child: CircularProgressIndicator(
                 value: prog / 100,
                 strokeWidth: 14,
-                backgroundColor: AppColors.primary.withOpacity(0.05),
+                backgroundColor: AppColors.primary.withValues(alpha:0.05),
                 color: const Color(0xFF32D74B), // Насыщенный зеленый
               ),
             ),
@@ -429,10 +430,10 @@ Widget _statTile({
     decoration: BoxDecoration(
       color: Colors.white,
       borderRadius: BorderRadius.circular(22),
-      border: Border.all(color: color.withOpacity(0.1), width: 1.5),
+      border: Border.all(color: color.withValues(alpha:0.1), width: 1.5),
       boxShadow: [
         BoxShadow(
-          color: color.withOpacity(0.04),
+          color: color.withValues(alpha:0.04),
           blurRadius: 10,
           offset: const Offset(0, 4),
         ),
@@ -445,7 +446,7 @@ Widget _statTile({
           height: 48,
           width: 48,
           decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
+            color: color.withValues(alpha:0.1),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Icon(icon, color: color, size: 22),
@@ -498,7 +499,7 @@ Widget _statTile({
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.bold,
-                color: color.withOpacity(0.5),
+                color: color.withValues(alpha:0.5),
               ),
             ),
           ],
@@ -582,7 +583,7 @@ Widget _buildStepCard(
       color: isDone ? const Color(0xFFF9FBFF) : Colors.white,
       borderRadius: BorderRadius.circular(22),
       border: Border.all(
-        color: isDone ? Colors.green.withOpacity(0.25) : const Color(0xFFE8ECF1), 
+        color: isDone ? Colors.green.withValues(alpha:0.25) : const Color(0xFFE8ECF1), 
         width: 1.5
       ),
     ),
@@ -963,10 +964,10 @@ Widget _buildMaterialsTab(GoalResponse g, bool isCreator) {
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(20),
                         boxShadow: [
-                          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 12, offset: const Offset(0, 4)),
+                          BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 12, offset: const Offset(0, 4)),
                         ],
                         border: Border.all(
-                          color: m.type == "File" ? Colors.green.withOpacity(0.2) : Colors.blue.withOpacity(0.2),
+                          color: m.type == "File" ? Colors.green.withValues(alpha:0.2) : Colors.blue.withValues(alpha:0.2),
                           width: 1.5,
                         ),
                       ),
@@ -984,7 +985,7 @@ Widget _buildMaterialsTab(GoalResponse g, bool isCreator) {
                                     Container(
                                       padding: const EdgeInsets.all(10),
                                       decoration: BoxDecoration(
-                                        color: m.type == "File" ? Colors.green.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
+                                        color: m.type == "File" ? Colors.green.withValues(alpha:0.1) : Colors.blue.withValues(alpha:0.1),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: Icon(
@@ -1003,7 +1004,7 @@ Widget _buildMaterialsTab(GoalResponse g, bool isCreator) {
                                           Container(
                                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                             decoration: BoxDecoration(
-                                              color: m.type == "File" ? Colors.green.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
+                                              color: m.type == "File" ? Colors.green.withValues(alpha:0.1) : Colors.blue.withValues(alpha:0.1),
                                               borderRadius: BorderRadius.circular(8),
                                             ),
                                             child: Text(
@@ -1024,9 +1025,9 @@ Widget _buildMaterialsTab(GoalResponse g, bool isCreator) {
                                   Container(
                                     padding: const EdgeInsets.all(12),
                                     decoration: BoxDecoration(
-                                      color: Colors.orange.withOpacity(0.05),
+                                      color: Colors.orange.withValues(alpha:0.05),
                                       borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(color: Colors.orange.withOpacity(0.15)),
+                                      border: Border.all(color: Colors.orange.withValues(alpha:0.15)),
                                     ),
                                     child: Row(
                                       children: [
@@ -1078,7 +1079,7 @@ Widget _buildMaterialsTab(GoalResponse g, bool isCreator) {
                                       },
                                       icon: Container(
                                         padding: const EdgeInsets.all(8),
-                                        decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+                                        decoration: BoxDecoration(color: AppColors.primary.withValues(alpha:0.1), borderRadius: BorderRadius.circular(10)),
                                         child: const Icon(Icons.open_in_new_rounded, color: AppColors.primary, size: 18),
                                       ),
                                       tooltip: m.type == "File" ? "Скачать файл" : "Открыть ссылку",
@@ -1088,7 +1089,7 @@ Widget _buildMaterialsTab(GoalResponse g, bool isCreator) {
                                         onPressed: () => _confirmDeleteMaterial(g.id, m),
                                         icon: Container(
                                           padding: const EdgeInsets.all(8),
-                                          decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+                                          decoration: BoxDecoration(color: Colors.red.withValues(alpha:0.1), borderRadius: BorderRadius.circular(10)),
                                           child: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 18),
                                         ),
                                         tooltip: "Удалить материал",
@@ -1099,7 +1100,7 @@ Widget _buildMaterialsTab(GoalResponse g, bool isCreator) {
                                         onPressed: () => _showEditMaterialModal(g.id, m), // Вызываем модалку редактирования
                                         icon: Container(
                                           padding: const EdgeInsets.all(8),
-                                          decoration: BoxDecoration(color: AppColors.navy.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+                                          decoration: BoxDecoration(color: AppColors.navy.withValues(alpha:0.1), borderRadius: BorderRadius.circular(10)),
                                           child: const Icon(Icons.edit_rounded, color: AppColors.navy, size: 18),
                                         ),
                                         tooltip: "Редактировать",
@@ -1241,8 +1242,8 @@ Widget _buildMaterialsTab(GoalResponse g, bool isCreator) {
                 show: true,
                 drawVerticalLine: true,
                 horizontalInterval: totalTasks > 5 ? (totalTasks / 5) : 1,
-                getDrawingHorizontalLine: (value) => FlLine(color: Colors.grey.withOpacity(0.1), strokeWidth: 1),
-                getDrawingVerticalLine: (value) => FlLine(color: Colors.grey.withOpacity(0.1), strokeWidth: 1),
+                getDrawingHorizontalLine: (value) => FlLine(color: Colors.grey.withValues(alpha:0.1), strokeWidth: 1),
+                getDrawingVerticalLine: (value) => FlLine(color: Colors.grey.withValues(alpha:0.1), strokeWidth: 1),
               ),
               titlesData: FlTitlesData(
                 show: true,
@@ -1291,7 +1292,7 @@ Widget _buildMaterialsTab(GoalResponse g, bool isCreator) {
                   belowBarData: BarAreaData(
                     show: true,
                     gradient: LinearGradient(
-                      colors: [AppColors.primary.withOpacity(0.2), AppColors.primary.withOpacity(0)],
+                      colors: [AppColors.primary.withValues(alpha:0.2), AppColors.primary.withValues(alpha:0)],
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                     ),
@@ -1415,7 +1416,7 @@ void _showGoalSettingsModal(GoalResponse goal, bool isCreator) {
             ] else ...[
               ListTile(
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                tileColor: Colors.orange.withOpacity(0.05),
+                tileColor: Colors.orange.withValues(alpha:0.05),
                 leading: const Icon(Icons.exit_to_app_rounded, color: Colors.orange),
                 title: const Text("Покинуть маршрут", style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
                 onTap: () async {
@@ -1536,13 +1537,13 @@ void _showGoalSettingsModal(GoalResponse goal, bool isCreator) {
             color: isSelected ? color : Colors.white,
             borderRadius: BorderRadius.circular(22),
             border: Border.all(
-              color: color.withOpacity(isSelected ? 1 : 0.2),
+              color: color.withValues(alpha:isSelected ? 1 : 0.2),
               width: 2,
             ),
             boxShadow: [
               if (isSelected)
                 BoxShadow(
-                  color: color.withOpacity(0.3),
+                  color: color.withValues(alpha:0.3),
                   blurRadius: 12,
                   offset: const Offset(0, 6),
                 ),
@@ -1783,12 +1784,14 @@ void _showAddTaskModal(int gid) {
       ),
     );
   }
-  // Найти в GoalDetailsScreen метод _showEditTaskModal:
 
 void _showEditTaskModal(TaskResponse t) {
     final tc = TextEditingController(text: t.title);
     DateTime d = t.dueDate;
-    final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+    
+    // Сегодняшнее число без времени для точного сравнения дат
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
 
     MainDashboardLayout.showHiveDialog(
       context,
@@ -1798,13 +1801,17 @@ void _showEditTaskModal(TaskResponse t) {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
+              Text(
                 "РЕДАКТИРОВАНИЕ ШАГА",
-                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy),
+                style: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w900, 
+                  fontSize: 18, 
+                  color: AppColors.navy
+                ),
               ),
               const SizedBox(height: 25),
               
-              // Поле ввода с переносом текста
+              // Поле ввода текста
               TextField(
                 controller: tc,
                 maxLines: null,
@@ -1819,6 +1826,7 @@ void _showEditTaskModal(TaskResponse t) {
               
               const SizedBox(height: 20),
               
+              // Поле выбора даты
               Container(
                 decoration: BoxDecoration(
                   color: Colors.grey.shade50,
@@ -1829,9 +1837,11 @@ void _showEditTaskModal(TaskResponse t) {
                   onTap: () async {
                     final sel = await showDatePicker(
                       context: context,
-                      initialDate: d.isBefore(today) ? today : d,
-                      firstDate: today,
-                      lastDate: DateTime.now().add(const Duration(days: 730)),
+                      // Если текущая дата задачи уже в прошлом, позволяем календарю открыться на ней
+                      initialDate: d,
+                      // Позволяем выбрать дату в диапазоне +/- 2 года
+                      firstDate: DateTime.now().subtract(const Duration(days: 365 * 2)),
+                      lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
                       locale: const Locale('ru'),
                     );
                     if (sel != null) st(() => d = sel);
@@ -1857,13 +1867,25 @@ void _showEditTaskModal(TaskResponse t) {
                   ),
                   onPressed: () async {
                     if (tc.text.trim().isNotEmpty) {
-                      if (d.isBefore(today)) {
+                      
+                      // ИСПРАВЛЕННАЯ ЛОГИКА ВАЛИДАЦИИ:
+                      // Сравниваем только год, месяц и день
+                      bool isDateChanged = d.year != t.dueDate.year || 
+                                         d.month != t.dueDate.month || 
+                                         d.day != t.dueDate.day;
+
+                      // Если дату ИЗМЕНИЛИ и новая дата раньше сегодняшнего дня — ругаемся
+                      if (isDateChanged && d.isBefore(today)) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Выберите будущую дату")),
+                          const SnackBar(
+                            content: Text("Нельзя перенести задачу на прошедшее время"),
+                            backgroundColor: Colors.redAccent,
+                          ),
                         );
                         return;
                       }
 
+                      // Если дату не меняли ИЛИ дата корректная — сохраняем
                       await context.read<TaskProvider>().updateTask(
                         taskId: t.id,
                         goalId: t.goalId,
@@ -1871,7 +1893,8 @@ void _showEditTaskModal(TaskResponse t) {
                         newDate: d,
                         goalProv: context.read<GoalProvider>(),
                       );
-                      Navigator.pop(context);
+                      
+                      if (mounted) Navigator.pop(context);
                     }
                   },
                   child: const Text(
@@ -2164,9 +2187,9 @@ void _showAddMaterialModal(int goalId) {
           : Container(
               padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.05),
+                color: Colors.green.withValues(alpha:0.05),
                 borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: Colors.green.withOpacity(0.2)),
+                border: Border.all(color: Colors.green.withValues(alpha:0.2)),
               ),
               child: Row(
                 children: [
@@ -2209,7 +2232,7 @@ void _showAddMaterialModal(int goalId) {
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 15),
         decoration: BoxDecoration(
-          color: active ? color.withOpacity(0.1) : Colors.grey.shade50,
+          color: active ? color.withValues(alpha:0.1) : Colors.grey.shade50,
           borderRadius: BorderRadius.circular(15),
           border: Border.all(
             color: active ? color : Colors.grey.shade300,

@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
-
-import '../models/all_models.dart';
 import '../providers/group_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/main_dashboard_layout.dart';
@@ -250,6 +248,13 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
       }
     }
 
+    for (var q in _questions) {
+      if (q['question'].toString().isEmpty || q['correctAnswer'] == null) {
+        _showError("Проверьте, что во всех вопросах заполнен текст и правильный ответ");
+        return;
+      }
+    }
+
     try {
       await context.read<GroupProvider>().createRoadmapStepWithTest(
         groupId: widget.groupId,
@@ -263,7 +268,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
         Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Тест успешно опубликован!"),
+            content: Text("Тест успешно опубликован и доступен ученику!"),
             backgroundColor: Colors.green,
           )
         );
@@ -339,7 +344,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha:0.05),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -454,7 +459,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
         borderRadius: BorderRadius.circular(15),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha:0.05),
             blurRadius: 5,
             offset: const Offset(0, 2),
           ),
@@ -517,7 +522,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.purple.withOpacity(0.3),
+            color: Colors.purple.withValues(alpha:0.3),
             blurRadius: 15,
             offset: const Offset(0, 5),
           ),
@@ -564,7 +569,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.1),
+              color: Colors.white.withValues(alpha:0.1),
               borderRadius: BorderRadius.circular(12),
             ),
             child: DropdownButtonFormField<String>(
@@ -597,7 +602,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
                     const SizedBox(height: 8),
                     Container(
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.1),
+                        color: Colors.white.withValues(alpha:0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
@@ -635,7 +640,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.1),
+                        color: Colors.white.withValues(alpha:0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: DropdownButtonFormField<int>(
@@ -700,7 +705,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
             hintStyle: const TextStyle(color: Colors.white70),
             prefixIcon: Icon(icon, color: Colors.white60),
             filled: true,
-            fillColor: Colors.white.withOpacity(0.1),
+            fillColor: Colors.white.withValues(alpha:0.1),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none,
@@ -790,7 +795,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: AppColors.navy.withOpacity(0.1),
+                    color: AppColors.navy.withValues(alpha:0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
@@ -864,7 +869,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
         border: Border.all(color: AppColors.navy, width: 2),
         boxShadow: [
           BoxShadow(
-            color: AppColors.navy.withOpacity(0.1),
+            color: AppColors.navy.withValues(alpha:0.1),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -1145,7 +1150,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
       style: OutlinedButton.styleFrom(
         minimumSize: const Size(double.infinity, 55),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        side: BorderSide(color: AppColors.navy.withOpacity(0.5), width: 2),
+        side: BorderSide(color: AppColors.navy.withValues(alpha:0.5), width: 2),
       ),
     );
   }
@@ -1156,7 +1161,7 @@ class _TestCreationScreenState extends State<TestCreationScreen> {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: AppColors.navy.withOpacity(0.3),
+            color: AppColors.navy.withValues(alpha:0.3),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),

@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:hive_app/providers/user_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -26,8 +26,11 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
+
+
 class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   // Контроллеры
+  bool _isRatingDialogShowing = false;
   late TabController _tabController;
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _chatScrollController = ScrollController();
@@ -47,118 +50,129 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _messageController.addListener(_onChatInputChanged);
   }
 
-   Future<void> _initializeChat() async {
-    // Небольшая задержка, чтобы дать UI отрисоваться и не конфликтовать с анимациями перехода
-    await Future.delayed(Duration.zero);
-    
-    if (!mounted) return;
+Future<void> _initializeChat() async {
+  await Future.delayed(Duration.zero);
+  if (!mounted) return;
 
-    try {
-      final groupProv = context.read<GroupProvider>();
-      final authProv = context.read<AuthProvider>();
-      final myId = authProv.user?.id ?? 0;
+  final groupProv = context.read<GroupProvider>();
+  final authProv = context.read<AuthProvider>();
+  final myId = authProv.user?.id ?? 0;
 
-      // ОЧЕНЬ ВАЖНО: проверяем, не загружены ли уже сообщения для этой группы, 
-      // чтобы не перезапускать SignalR зря
-      await groupProv.openChat(widget.group.id, myId);
-
-    } catch (e) {
-      debugPrint("Init Error: $e");
-    } finally {
-      // Даже если произошла ошибка, убираем индикатор загрузки, 
-      // иначе будет "вечная загрузка"
+  // Передаем callback onBothFinished
+  // Добавляем context в качестве третьего позиционного аргумента
+  await groupProv.openChat(
+    widget.group.id, 
+    myId,
+    context, // <--- ДОБАВЬТЕ ЭТУ СТРОКУ
+    onBothFinished: () {
+      // Это выполнится, когда SignalR пришлет сигнал финиша
       if (mounted) {
-        setState(() => _isInitialized = true);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showRatingDialog(); 
+        });
       }
+    },
+  );
+
+  if (mounted) setState(() => _isInitialized = true);
+}
+
+  Widget _buildPinnedHeader(MessageDto pinned) {
+    return FadeInDown(
+      // Анимация появления
+      duration: const Duration(milliseconds: 200),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha:0.95),
+          border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+        ),
+        child: InkWell(
+          onTap: () => _scrollToMessage(pinned.id), // Прыжок при нажатии
+          child: Row(
+            children: [
+              Container(width: 3, height: 32, color: AppColors.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "Закреплённое сообщение",
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    Text(
+                      pinned.content,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20, color: Colors.grey),
+                onPressed: () => context.read<GroupProvider>().togglePinMessage(
+                  pinned.id,
+                  false,
+                  widget.group.id,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _scrollToMessage(int messageId) {
+    final prov = context.read<GroupProvider>();
+    // Находим индекс сообщения в оригинальном списке
+    final index = prov.messages.reversed.toList().indexWhere(
+      (m) => m.id == messageId,
+    );
+
+    if (index != -1) {
+      _chatScrollController.animateTo(
+        index * 80.0,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.fastOutSlowIn,
+      );
     }
   }
 
-
-  Widget _buildPinnedHeader(MessageDto pinned) {
-  return FadeInDown( // Анимация появления
-    duration: const Duration(milliseconds: 200),
-    child: Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.95),
-        border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+  // Вспомогательное окно подтверждения удаления
+  void _confirmDeleteMessage(int messageId) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Удалить?"),
+        content: const Text("Это сообщение исчезнет у всех участников чата."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("ОТМЕНА"),
+          ),
+          TextButton(
+            onPressed: () {
+              context.read<GroupProvider>().deleteMessage(messageId);
+              Navigator.pop(ctx);
+            },
+            child: const Text("УДАЛИТЬ", style: TextStyle(color: Colors.red)),
+          ),
+        ],
       ),
-      child: InkWell(
-        onTap: () => _scrollToMessage(pinned.id), // Прыжок при нажатии
-        child: Row(
-          children: [
-            Container(width: 3, height: 32, color: AppColors.primary),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    "Закреплённое сообщение",
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  Text(
-                    pinned.content,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, color: Colors.black87),
-                  ),
-                ],
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.close, size: 20, color: Colors.grey),
-              onPressed: () => context.read<GroupProvider>().togglePinMessage(pinned.id, false, widget.group.id),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-void _scrollToMessage(int messageId) {
-  final prov = context.read<GroupProvider>();
-  // Находим индекс сообщения в оригинальном списке
-  final index = prov.messages.reversed.toList().indexWhere((m) => m.id == messageId);
-
-  if (index != -1) {
-
-    _chatScrollController.animateTo(
-      index * 80.0, 
-      duration: const Duration(milliseconds: 500),
-      curve: Curves.fastOutSlowIn,
     );
   }
-}
-
-
-// Вспомогательное окно подтверждения удаления
-void _confirmDeleteMessage(int messageId) {
-  showDialog(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text("Удалить?"),
-      content: const Text("Это сообщение исчезнет у всех участников чата."),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("ОТМЕНА")),
-        TextButton(
-          onPressed: () {
-            context.read<GroupProvider>().deleteMessage(messageId);
-            Navigator.pop(ctx);
-          },
-          child: const Text("УДАЛИТЬ", style: TextStyle(color: Colors.red)),
-        ),
-      ],
-    ),
-  );
-}
 
   void _onChatInputChanged() {
     final text = _messageController.text;
@@ -212,26 +226,39 @@ void _confirmDeleteMessage(int messageId) {
 
   Future<void> _handleResourceOpen(String? path) async {
     if (path == null || path.isEmpty) return;
+
+    // Если это внешняя ссылка
     if (path.startsWith('http')) {
-      await launchUrl(Uri.parse(path), mode: LaunchMode.externalApplication);
+      final uri = Uri.parse(path);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
       return;
     }
+
+    // Если это файл на сервере
     String fileName = path.contains('/') ? path.split('/').last : path;
     final downloadUrl =
         'http://localhost:5254/api/Chat/download/${Uri.encodeComponent(fileName)}';
+
     try {
-      await launchUrl(
-        Uri.parse(downloadUrl),
-        mode: LaunchMode.externalApplication,
-      );
+      final uri = Uri.parse(downloadUrl);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        throw "Не удалось открыть $downloadUrl";
+      }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Ошибка открытия файла: $e")));
+      debugPrint("Ошибка открытия файла: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Ошибка открытия файла: $e")));
+      }
     }
   }
 
-  void _showAddStepDialog() {
+ void _showAddStepDialog() {
     final titleCtrl = TextEditingController();
     final theoryCtrl = TextEditingController();
     bool needArtifact = false;
@@ -245,162 +272,130 @@ void _confirmDeleteMessage(int messageId) {
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSt) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(25),
-          ),
-          title: const Text(
-            "НОВОЕ ЗАДАНИЕ / МАТЕРИАЛ",
-            style: TextStyle(fontWeight: FontWeight.w900),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: titleCtrl,
-                  decoration: AppDecorations.smartInput(
-                    "Текст задания *",
-                    Icons.edit_note,
-                  ),
-                  maxLines: 2,
-                ),
-                const SizedBox(height: 20),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(
-                    Icons.calendar_month,
-                    color: AppColors.primary,
-                  ),
-                  title: const Text("Дедлайн:"),
-                  subtitle: Text(
-                    DateFormat('dd MMMM yyyy', 'ru').format(deadline),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
-                  onTap: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: deadline,
-                      firstDate: DateTime.now(),
-                      lastDate: DateTime.now().add(const Duration(days: 365)),
-                    );
-                    if (picked != null) setSt(() => deadline = picked);
-                  },
-                ),
-                const Divider(),
-                SwitchListTile(
-                  title: const Text(
-                    "Использовать файл",
-                    style: TextStyle(fontSize: 14),
-                  ),
-                  value: useFileInsteadOfLink,
-                  onChanged: (v) => setSt(() => useFileInsteadOfLink = v),
-                ),
-                if (!useFileInsteadOfLink)
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+          title: const Text("НОВОЕ ЗАДАНИЕ / МАТЕРИАЛ", style: TextStyle(fontWeight: FontWeight.w900)),
+          content: ConstrainedBox(
+            // ОГРАНИЧЕНИЕ: Карточка не будет расти шире 500 пикселей
+            constraints: const BoxConstraints(maxWidth: 500),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                   TextField(
-                    controller: theoryCtrl,
-                    decoration: const InputDecoration(
-                      labelText: "Ссылка на теорию (URL)",
+                    controller: titleCtrl,
+                    // ПЕРЕНОС ТЕКСТА: Разрешаем до 5 строк, далее скролл. 
+                    // Текст будет уходить вниз, а не вбок.
+                    maxLines: 5,
+                    minLines: 1,
+                    keyboardType: TextInputType.multiline,
+                    style: const TextStyle(fontSize: 15),
+                    decoration: AppDecorations.smartInput(
+                      "Текст задания *",
+                      Icons.edit_note,
+                    ).copyWith(
+                      // Чтобы длинная строка без пробелов тоже пыталась перенестись
+                      hintStyle: const TextStyle(fontSize: 13),
                     ),
-                  )
-                else
-                  Container(
-                    margin: const EdgeInsets.symmetric(vertical: 10),
-                    child: selectedFile == null
-                        ? OutlinedButton.icon(
-                            onPressed: () async {
-                              final result = await FilePicker.platform
-                                  .pickFiles(withData: true);
-                              if (result != null)
-                                setSt(() => selectedFile = result.files.first);
-                            },
-                            icon: const Icon(Icons.upload_file),
-                            label: const Text("Выбрать файл"),
-                          )
-                        : Row(
-                            children: [
-                              const Icon(
-                                Icons.description,
-                                color: Colors.green,
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  selectedFile!.name,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              IconButton(
-                                onPressed: () =>
-                                    setSt(() => selectedFile = null),
-                                icon: const Icon(
-                                  Icons.close,
-                                  color: Colors.red,
-                                ),
-                              ),
-                            ],
-                          ),
                   ),
-                const SizedBox(height: 10),
-                CheckboxListTile(
-                  title: const Text(
-                    "Требовать отчет от ученика",
-                    style: TextStyle(fontSize: 13),
+                  const SizedBox(height: 20),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.calendar_month, color: AppColors.primary),
+                    title: const Text("Дедлайн:", style: TextStyle(fontSize: 13)),
+                    subtitle: Text(
+                      DateFormat('dd MMMM yyyy', 'ru').format(deadline),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: deadline,
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+                      if (picked != null) setSt(() => deadline = picked);
+                    },
                   ),
-                  value: needArtifact,
-                  onChanged: (v) => setSt(() => needArtifact = v!),
-                ),
-                if (isUploading)
-                  const Padding(
-                    padding: EdgeInsets.all(10),
-                    child: LinearProgressIndicator(),
+                  const Divider(),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text("Использовать файл", style: TextStyle(fontSize: 14)),
+                    value: useFileInsteadOfLink,
+                    onChanged: (v) => setSt(() => useFileInsteadOfLink = v),
                   ),
-              ],
+                  if (!useFileInsteadOfLink)
+                    TextField(
+                      controller: theoryCtrl,
+                      maxLines: 1, // Ссылку обычно не нужно многострочно
+                      decoration: AppDecorations.smartInput("Ссылка на теорию (URL)", Icons.link),
+                    )
+                  else
+                    // Блок выбора файла
+                    Container(
+                      margin: const EdgeInsets.symmetric(vertical: 10),
+                      width: double.infinity,
+                      child: selectedFile == null
+                          ? OutlinedButton.icon(
+                              onPressed: () async {
+                                final result = await FilePicker.platform.pickFiles(withData: true);
+                                if (result != null) setSt(() => selectedFile = result.files.first);
+                              },
+                              icon: const Icon(Icons.upload_file),
+                              label: const Text("Выбрать файл"),
+                            )
+                          : Row(
+                              children: [
+                                const Icon(Icons.description, color: Colors.green),
+                                const SizedBox(width: 8),
+                                Expanded(child: Text(selectedFile!.name, overflow: TextOverflow.ellipsis)),
+                                IconButton(onPressed: () => setSt(() => selectedFile = null), icon: const Icon(Icons.close, color: Colors.red)),
+                              ],
+                            ),
+                    ),
+                  const SizedBox(height: 10),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text("Требовать отчет от ученика", style: TextStyle(fontSize: 13)),
+                    value: needArtifact,
+                    onChanged: (v) => setSt(() => needArtifact = v!),
+                  ),
+                  if (isUploading) const Padding(padding: EdgeInsets.all(10), child: LinearProgressIndicator()),
+                ],
+              ),
             ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text("ОТМЕНА"),
-            ),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("ОТМЕНА")),
             ElevatedButton(
-              onPressed: isUploading
-                  ? null
-                  : () async {
-                      if (titleCtrl.text.isEmpty) return;
-                      setSt(() => isUploading = true);
-                      String? finalPath;
-                      try {
-                        if (useFileInsteadOfLink && selectedFile != null) {
-                          finalPath = await context
-                              .read<GroupProvider>()
-                              .uploadFileToServer(selectedFile!);
-                        } else {
-                          finalPath = theoryCtrl.text.isNotEmpty
-                              ? theoryCtrl.text.trim()
-                              : null;
-                        }
-                        await context.read<GroupProvider>().addRoadmapStep(
-                          groupId: widget.group.id,
-                          content: titleCtrl.text.trim(),
-                          date: deadline,
-                          isRequired: needArtifact,
-                          instructionUrl: finalPath,
-                        );
-                        if (mounted) Navigator.pop(ctx);
-                      } catch (e) {
-                        setSt(() => isUploading = false);
-                      }
-                    },
+              onPressed: isUploading ? null : () async {
+                if (titleCtrl.text.trim().isEmpty) return;
+                setSt(() => isUploading = true);
+                String? finalPath;
+                try {
+                  if (useFileInsteadOfLink && selectedFile != null) {
+                    finalPath = await context.read<GroupProvider>().uploadFileToServer(selectedFile!);
+                  } else {
+                    finalPath = theoryCtrl.text.isNotEmpty ? theoryCtrl.text.trim() : null;
+                  }
+                  await context.read<GroupProvider>().addRoadmapStep(
+                    groupId: widget.group.id,
+                    content: titleCtrl.text.trim(),
+                    date: deadline,
+                    isRequired: needArtifact,
+                    instructionUrl: finalPath,
+                  );
+                  if (mounted) Navigator.pop(ctx);
+                } catch (e) {
+                  setSt(() => isUploading = false);
+                }
+              },
               child: const Text("СОХРАНИТЬ"),
             ),
           ],
         ),
       ),
     );
-  }
+}
 
   void _showDetailedTestResults(RoadmapStepDto s) {
     if (s.testData == null) return;
@@ -491,13 +486,13 @@ void _confirmDeleteMessage(int messageId) {
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
                         color: isCorrect
-                            ? Colors.green.withOpacity(0.03)
-                            : Colors.red.withOpacity(0.03),
+                            ? Colors.green.withValues(alpha:0.03)
+                            : Colors.red.withValues(alpha:0.03),
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
                           color: isCorrect
-                              ? Colors.green.withOpacity(0.2)
-                              : Colors.red.withOpacity(0.2),
+                              ? Colors.green.withValues(alpha:0.2)
+                              : Colors.red.withValues(alpha:0.2),
                         ),
                       ),
                       child: Column(
@@ -627,7 +622,7 @@ void _confirmDeleteMessage(int messageId) {
       backgroundColor: Colors.white,
       elevation: 0.5,
       toolbarHeight: 70,
-      // ИСПРАВЛЕНО: Скрываем кнопку назад в вебе, так как сайдбар доступен всегда
+      // Кнопка назад (скрыта в веб-версии)
       leading: isWide
           ? const SizedBox.shrink()
           : IconButton(
@@ -641,9 +636,11 @@ void _confirmDeleteMessage(int messageId) {
       title: Row(
         children: [
           CircleAvatar(
-            backgroundColor: AppColors.navy.withOpacity(0.1),
+            backgroundColor: AppColors.navy.withValues(alpha:0.1),
             child: Text(
-              widget.group.name[0].toUpperCase(),
+              widget.group.name.isNotEmpty
+                  ? widget.group.name[0].toUpperCase()
+                  : "?",
               style: const TextStyle(
                 color: AppColors.navy,
                 fontWeight: FontWeight.bold,
@@ -672,6 +669,7 @@ void _confirmDeleteMessage(int messageId) {
           ),
         ],
       ),
+      
       bottom: TabBar(
         controller: _tabController,
         indicatorColor: AppColors.primary,
@@ -687,12 +685,14 @@ void _confirmDeleteMessage(int messageId) {
     );
   }
 
+
+
   void _showArtifactStatusDialog(RoadmapStepDto s) {
     MainDashboardLayout.showHiveDialog(
       context,
       StatefulBuilder(
         builder: (ctx, setSt) {
-          // Работа считается отклоненной, только если есть комментарий и статус не Done/UnderReview
+          // Логика состояний
           bool isRejected = s.teacherComment != null && s.status == "ToDo";
           bool hasArtifact = s.artifactUrl != null;
           bool isUnderReview = s.status == "UnderReview";
@@ -700,204 +700,239 @@ void _confirmDeleteMessage(int messageId) {
 
           return Padding(
             padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  isDone
-                      ? Icons.check_circle_rounded
-                      : (isRejected
-                            ? Icons.edit_notifications_rounded
-                            : (isUnderReview
-                                  ? Icons.hourglass_top_rounded
-                                  : Icons.cloud_upload_outlined)),
-                  size: 54,
-                  color: isDone
-                      ? Colors.green
-                      : (isRejected
-                            ? Colors.orange
-                            : (isUnderReview
-                                  ? Colors.blue
-                                  : AppColors.primary)),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  isDone
-                      ? "ЗАДАНИЕ ПРИНЯТО"
-                      : (isRejected
-                            ? "НУЖНЫ ПРАВКИ"
-                            : (isUnderReview ? "НА ПРОВЕРКЕ" : "СДАТЬ РАБОТУ")),
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18,
-                    color: AppColors.navy,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Иконка в зависимости от статуса
+                  Icon(
+                    isDone
+                        ? Icons.check_circle_rounded
+                        : (isRejected
+                              ? Icons.edit_notifications_rounded
+                              : (isUnderReview
+                                    ? Icons.hourglass_top_rounded
+                                    : Icons.cloud_upload_outlined)),
+                    size: 54,
+                    color: isDone
+                        ? Colors.green
+                        : (isRejected
+                              ? Colors.orange
+                              : (isUnderReview
+                                    ? Colors.blue
+                                    : AppColors.primary)),
                   ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  s.content,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
-                ),
+                  const SizedBox(height: 16),
 
-                // Блок правок (скрывается, если статус изменился на UnderReview)
-                if (isRejected)
-                  Container(
-                    margin: const EdgeInsets.only(top: 20),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(15),
-                      border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  // Заголовок
+                  Text(
+                    isDone
+                        ? "ЗАДАНИЕ ПРИНЯТО"
+                        : (isRejected
+                              ? "НУЖНЫ ПРАВКИ"
+                              : (isUnderReview
+                                    ? "НА ПРОВЕРКЕ"
+                                    : "СДАТЬ РАБОТУ")),
+                    style: GoogleFonts.manrope(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
+                      color: AppColors.navy,
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          "КОММЕНТАРИЙ УЧИТЕЛЯ:",
-                          style: TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 10,
-                            color: Colors.orange,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          s.teacherComment!,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            height: 1.4,
-                            color: AppColors.navy,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Текст задания (с переносом)
+                  Flexible(
+                    child: Text(
+                      s.content,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.grey,
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
                     ),
                   ),
 
-                const SizedBox(height: 25),
-
-                // ОТОБРАЖЕНИЕ ПОСЛЕДНЕГО ОТВЕТА (Кликабельно)
-                if (hasArtifact)
-                  InkWell(
-                    onTap: () => _handleResourceOpen(
-                      s.artifactUrl,
-                    ), // Открывает файл или ссылку
-                    borderRadius: BorderRadius.circular(15),
-                    child: Container(
-                      padding: const EdgeInsets.all(15),
+                  // Блок правок учителя
+                  if (isRejected)
+                    Container(
+                      margin: const EdgeInsets.only(top: 20),
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: isUnderReview
-                            ? Colors.blue.withOpacity(0.05)
-                            : const Color(0xFFF1F4F9),
+                        color: Colors.orange.withValues(alpha:0.08),
                         borderRadius: BorderRadius.circular(15),
                         border: Border.all(
-                          color: isUnderReview
-                              ? Colors.blue.withOpacity(0.2)
-                              : Colors.transparent,
+                          color: Colors.orange.withValues(alpha:0.3),
                         ),
                       ),
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(
-                            s.artifactUrl!.startsWith('http')
-                                ? Icons.link_rounded
-                                : Icons.description_rounded,
-                            color: AppColors.primary,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  "ВАШ ПОСЛЕДНИЙ ОТВЕТ (НАЖМИТЕ, ЧТОБЫ ОТКРЫТЬ):",
-                                  style: TextStyle(
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                Text(
-                                  s.artifactUrl!,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                    color: AppColors.navy,
-                                    decoration: TextDecoration.underline,
-                                  ),
-                                ),
-                              ],
+                          const Text(
+                            "КОММЕНТАРИЙ УЧИТЕЛЯ:",
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 10,
+                              color: Colors.orange,
+                              letterSpacing: 0.5,
                             ),
                           ),
-                          if (!isDone)
-                            IconButton(
-                              onPressed: () =>
-                                  setSt(() => s.artifactUrl = null),
-                              icon: const Icon(
-                                Icons.delete_sweep_rounded,
-                                color: Colors.redAccent,
-                              ),
-                              tooltip: "Загрузить другое",
+                          const SizedBox(height: 8),
+                          Text(
+                            s.teacherComment!,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: AppColors.navy,
+                              fontWeight: FontWeight.w600,
+                              height: 1.4,
                             ),
+                          ),
                         ],
                       ),
                     ),
-                  ),
 
-                const SizedBox(height: 30),
+                  const SizedBox(height: 25),
 
-                // КНОПКИ ЗАГРУЗКИ НОВОГО
-                if (!hasArtifact && !isDone)
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            _showAddLinkDialog(s.id);
-                          },
-                          icon: const Icon(Icons.link),
-                          label: const Text("ССЫЛКА"),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.navy,
-                          ),
-                          onPressed: () async {
-                            await context.read<GroupProvider>().uploadArtifact(
-                              s.id,
-                              s.groupId,
-                            );
-                            Navigator.pop(context);
-                            _refreshData();
-                          },
-                          icon: const Icon(
-                            Icons.upload_file,
-                            color: Colors.white,
-                          ),
-                          label: const Text(
-                            "ФАЙЛ",
-                            style: TextStyle(color: Colors.white),
+                  // Отображение сданного ранее ответа
+                  if (hasArtifact)
+                    InkWell(
+                      onTap: () => _handleResourceOpen(s.artifactUrl),
+                      borderRadius: BorderRadius.circular(15),
+                      child: Container(
+                        padding: const EdgeInsets.all(15),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F4F9),
+                          borderRadius: BorderRadius.circular(15),
+                          border: Border.all(
+                            color: isUnderReview
+                                ? Colors.blue.withValues(alpha:0.2)
+                                : Colors.transparent,
                           ),
                         ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              s.artifactUrl!.startsWith('http')
+                                  ? Icons.link_rounded
+                                  : Icons.description_rounded,
+                              color: AppColors.primary,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    "ВАШ ПОСЛЕДНИЙ ОТВЕТ (НАЖМИТЕ):",
+                                    style: TextStyle(
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                  Text(
+                                    s.artifactUrl!,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                      color: AppColors.navy,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            // Кнопка удаления для пересдачи
+                            if (!isDone)
+                              IconButton(
+                                onPressed: () =>
+                                    setSt(() => s.artifactUrl = null),
+                                icon: const Icon(
+                                  Icons.delete_sweep_rounded,
+                                  color: Colors.redAccent,
+                                ),
+                                tooltip: "Сбросить и прикрепить заново",
+                              ),
+                          ],
+                        ),
                       ),
-                    ],
-                  )
-                else
-                  SizedBox(
-                    width: double.infinity,
-                    child: TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text("ЗАКРЫТЬ"),
                     ),
-                  ),
-              ],
+
+                  const SizedBox(height: 30),
+
+                  // Кнопки действий
+                  if (!hasArtifact && !isDone)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _showAddLinkDialog(s.id, s.groupId);
+                            },
+                            icon: const Icon(Icons.link, size: 18),
+                            label: const Text(
+                              "ССЫЛКА",
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () async {
+                              // Вызов метода загрузки файла из GroupProvider
+                              await context
+                                  .read<GroupProvider>()
+                                  .uploadArtifact(s.id, s.groupId);
+                              Navigator.pop(context);
+                              _refreshData();
+                            },
+                            icon: const Icon(
+                              Icons.upload_file,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            label: const Text(
+                              "ФАЙЛ",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.navy,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text(
+                          "ЗАКРЫТЬ",
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           );
         },
@@ -905,153 +940,86 @@ void _confirmDeleteMessage(int messageId) {
     );
   }
 
-  void _showTeacherDeclineDialog(int stepId) {
-    final commentCtrl = TextEditingController();
+Widget _buildMessagesTab(int myId) {
+    return Consumer<GroupProvider>(
+      builder: (context, prov, _) {
+        final pinned = prov.pinnedMessage;
+        // ВАЖНО: Больше не делаем .reversed.toList() здесь! 
+        // Провайдер уже отдает список в нужном для reverse:true порядке.
+        final displayMessages = prov.messages; 
 
-    MainDashboardLayout.showHiveDialog(
-      context,
-      Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        return Column(
           children: [
-            const Icon(
-              Icons.assignment_return_rounded,
-              size: 50,
-              color: Colors.orange,
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              "ВЕРНУТЬ НА ДОРАБОТКУ",
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 18,
-                color: AppColors.navy,
-              ),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              "Опишите ученику, что именно нужно исправить в работе.",
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey, fontSize: 12),
-            ),
-            const SizedBox(height: 25),
-            TextField(
-              controller: commentCtrl,
-              maxLines: 4,
-              decoration: AppDecorations.smartInput(
-                "Замечания по работе...",
-                Icons.edit_note_rounded,
-              ),
-            ),
-            const SizedBox(height: 30),
-            Row(
-              children: [
-                Expanded(
-                  child: TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text("ОТМЕНА"),
-                  ),
-                ),
-                const SizedBox(width: 15),
-                Expanded(
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
+            if (pinned != null) _buildPinnedHeader(pinned),
+
+            Expanded(
+              child: prov.messages.isEmpty
+                  ? const Center(child: Text("Сообщений нет"))
+                  : ListView.builder(
+                      controller: _chatScrollController,
+                      reverse: true, // НОВЫЕ СООБЩЕНИЯ СНИЗУ (ИНДЕКС 0)
+                      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 20),
+                      itemCount: displayMessages.length,
+                      itemBuilder: (ctx, i) {
+                        final m = displayMessages[i];
+                        final bool isMe = m.senderId == myId;
+
+                        if (m.content.startsWith("[COMPLETION_REQUEST]")) {
+                          return _buildCompletionRequestBubble(m, isMe);
+                        }
+                        if (m.content.startsWith("[RESTART_PROPOSAL]")) {
+                          return _buildRestartProposalBubble(m, isMe);
+                        }
+                        return _buildMessageBubble(m, isMe);
+                      },
                     ),
-                    onPressed: () {
-                      if (commentCtrl.text.trim().isNotEmpty) {
-                        context.read<GroupProvider>().verifyStep(
-                          stepId,
-                          false,
-                          commentCtrl.text.trim(),
-                          widget.group.id,
-                        );
-                        Navigator.pop(context);
-                      }
-                    },
-                    child: const Text(
-                      "ОТПРАВИТЬ ПРАВКИ",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
             ),
+            _buildChatInputArea(),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 
-Widget _buildMessagesTab(int myId) {
-  return Consumer<GroupProvider>(
-    builder: (context, prov, _) {
-      final pinned = prov.pinnedMessage;
-      // Работаем с перевернутым списком для ListView
-      final displayMessages = prov.messages.reversed.toList();
-
-      return Column(
-        children: [
-          // ЭТОТ БЛОК ПОЯВИТСЯ СРАЗУ ПОД ВКЛАДКАМИ
-          if (pinned != null) _buildPinnedHeader(pinned),
-
-          Expanded(
-            child: prov.messages.isEmpty
-                ? const Center(child: Text("Сообщений нет"))
-                : ListView.builder(
-                    controller: _chatScrollController,
-                    reverse: true, // НОВЫЕ СООБЩЕНИЯ СНИЗУ
-                    padding: const EdgeInsets.all(20),
-                    itemCount: displayMessages.length,
-                    itemBuilder: (ctx, i) {
-                      return _buildMessageBubble(displayMessages[i], displayMessages[i].senderId == myId);
-                    },
-                  ),
-          ),
-          _buildChatInputArea(),
-        ],
-      );
-    },
-  );
-}
-
 Widget _buildMessageBubble(MessageDto m, bool isMe) {
-  // Следим за изменениями в GroupProvider (для обновления закрепов)
+  // Следим за изменениями в GroupProvider для обновления состояния закладок
   final prov = context.watch<GroupProvider>();
-  
-  // Проверяем, закреплено ли сообщение локально (закладка)
+
+  // Проверяем, закреплено ли сообщение локально (в закладках пользователя)
   final isLocallyPinned = prov.myPinnedMessages.contains(m.id);
-  // Общее состояние: закреплено хоть как-то
+  // Общее состояние: закреплено либо глобально для всех, либо локально
   final isAnyPinned = m.isPinned || isLocallyPinned;
 
   return Align(
     alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
     child: Container(
-      width: 380,
-      margin: const EdgeInsets.symmetric(vertical: 5),
+      // Ограничиваем ширину сообщения до 75% экрана
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.75,
+      ),
+      margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        // Синий цвет для "меня" (как на скрине), белый для собеседника
+        // Темно-синий для "меня", белый для партнера
         color: isMe ? const Color(0xFF0D47A1) : Colors.white,
-        borderRadius: BorderRadius.circular(15),
-        // Рамка появляется только при закрепе
-        border: isAnyPinned 
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(18),
+          topRight: const Radius.circular(18),
+          bottomLeft: isMe ? const Radius.circular(18) : Radius.zero,
+          bottomRight: isMe ? Radius.zero : const Radius.circular(18),
+        ),
+        // Подсветка рамки при закрепе (оранжевый для всех, синий для личного)
+        border: isAnyPinned
             ? Border.all(
-                color: m.isPinned ? Colors.orange : Colors.blue, 
-                width: 1.5,
-              ) 
-            : null,
+                color: m.isPinned 
+                    ? Colors.orange.withValues(alpha: 0.5) 
+                    : Colors.blue.withValues(alpha: 0.5),
+                width: 2,
+              )
+            : Border.all(color: Colors.grey.withValues(alpha: 0.1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 5,
             offset: const Offset(0, 2),
           ),
@@ -1059,64 +1027,66 @@ Widget _buildMessageBubble(MessageDto m, bool isMe) {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // ВЕРХНЯЯ СТРОКА: Имя/Индикатор и Кнопка меню
+          // --- ХЕДЕР СООБЩЕНИЯ ---
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Левая сторона заголовка сообщения
               Expanded(
                 child: isAnyPinned
                     ? Row(
                         children: [
                           Icon(
-                            m.isPinned ? Icons.push_pin : Icons.bookmark, 
-                            size: 12, 
-                            color: isMe ? Colors.white70 : (m.isPinned ? Colors.orange : Colors.blue),
+                            m.isPinned ? Icons.push_pin : Icons.bookmark,
+                            size: 12,
+                            color: isMe 
+                                ? Colors.white70 
+                                : (m.isPinned ? Colors.orange : Colors.blue),
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            m.isPinned ? "ЗАКРЕПЛЕНО ДЛЯ ВСЕХ" : "ВАША ЗАКЛАДКА",
+                            m.isPinned ? "ЗАКРЕПЛЕНО" : "В ЗАКЛАДКАХ",
                             style: TextStyle(
-                              fontSize: 9, 
+                              fontSize: 9,
                               fontWeight: FontWeight.bold,
                               color: isMe ? Colors.white70 : Colors.grey[600],
+                              letterSpacing: 0.5,
                             ),
                           ),
                         ],
                       )
-                    : (!isMe 
+                    : (!isMe
                         ? Text(
-                            m.senderName, 
+                            m.senderName,
                             style: const TextStyle(
-                              fontSize: 11, 
-                              fontWeight: FontWeight.bold, 
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
                               color: Colors.blue,
                             ),
                           )
                         : const SizedBox()),
               ),
-
-              // КНОПКА ТРИ ТОЧКИ (Меню)
+              // Кнопка меню (три точки)
               _buildMessageMenu(m, isMe),
             ],
           ),
 
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
 
-          // ТЕКСТ СООБЩЕНИЯ
+          // --- ТЕКСТ СООБЩЕНИЯ ---
           Text(
             m.content,
             style: TextStyle(
               color: isMe ? Colors.white : Colors.black87,
               fontSize: 14,
-              height: 1.3, // Межстрочный интервал для читаемости
+              height: 1.4,
             ),
           ),
 
           const SizedBox(height: 6),
 
-          // НИЖНЯЯ СТРОКА: Время и Статус прочтения
+          // --- ФУТЕР СООБЩЕНИЯ ---
           Align(
             alignment: Alignment.bottomRight,
             child: Row(
@@ -1125,15 +1095,16 @@ Widget _buildMessageBubble(MessageDto m, bool isMe) {
                 Text(
                   DateFormat('HH:mm').format(m.sentAt),
                   style: TextStyle(
-                    fontSize: 10, 
+                    fontSize: 10,
                     color: isMe ? Colors.white60 : Colors.grey[500],
                   ),
                 ),
                 if (isMe) ...[
                   const SizedBox(width: 4),
                   Icon(
-                    Icons.done_all, 
-                    size: 14, 
+                    Icons.done_all,
+                    size: 14,
+                    // Галочки голубые, если прочитано, и серые, если просто доставлено
                     color: m.isRead ? Colors.lightBlueAccent : Colors.white54,
                   ),
                 ],
@@ -1146,8 +1117,111 @@ Widget _buildMessageBubble(MessageDto m, bool isMe) {
   );
 }
 
-Widget _buildMessageMenu(MessageDto m, bool isMe) {
+
+  Widget _buildRestartProposalBubble(MessageDto m, bool isMe) {
   final prov = context.read<GroupProvider>();
+  final String text = m.content.split('|').last;
+
+  return FadeInUp(
+    child: Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.purple.withValues(alpha:0.05),
+        borderRadius: BorderRadius.circular(25),
+        border: Border.all(color: Colors.purple.withValues(alpha:0.2), width: 2),
+      ),
+      child: Column(
+      children: [
+        Text(m.content.split('|').last),
+        if (!isMe)
+          ElevatedButton(
+            onPressed: () => prov.confirmRestart(widget.group.id), // После этого обе переменные станут false и чат откроется
+            child: const Text("СОГЛАСЕН"),
+          )
+        else
+          const Text("Ожидание согласия партнера..."),
+      ],
+    ),
+    ),
+  );
+}
+
+
+Widget _buildNormalInput() {
+  return Container(
+    padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
+    decoration: const BoxDecoration(
+      color: Colors.white,
+      border: Border(top: BorderSide(color: Color(0xFFF1F5F9))),
+    ),
+    child: Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _messageController,
+            focusNode: _messageFocusNode,
+            maxLines: null,
+            decoration: InputDecoration(
+              hintText: "Напишите сообщение...",
+              filled: true,
+              fillColor: const Color(0xFFF8FAFC),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(25),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        CircleAvatar(
+          backgroundColor: const Color(0xFF023E8A),
+          radius: 24,
+          child: IconButton(
+            icon: const Icon(Icons.send, color: Colors.white, size: 20),
+            onPressed: () {
+              if (_messageController.text.trim().isNotEmpty) {
+                context.read<GroupProvider>().sendMessage(
+                  widget.group.id,
+                  _messageController.text.trim(),
+                );
+                _messageController.clear();
+              }
+            },
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> _confirmFinish() async {
+  try {
+    // Просто шлем запрос. Окно рейтинга откроется САМО через колбэк в _initializeChat
+    bool isBothFinished = await context.read<GroupProvider>().confirmFinish(widget.group.id);
+
+    if (!mounted) return;
+
+    if (!isBothFinished) {
+      // Показываем это только если обучение еще не завершено полностью
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Вы подтвердили выпуск партнера. Ожидаем, когда он завершит свою часть..."),
+          backgroundColor: Colors.blue,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  } catch (e) {
+    debugPrint("Confirm error: $e");
+  }
+}
+
+  Widget _buildMessageMenu(MessageDto m, bool isMe) {
+  final prov = context.read<GroupProvider>();
+  // ИСПОЛЬЗУЕМ ПЕРЕМЕННУЮ ТУТ:
   final isLocallyPinned = prov.myPinnedMessages.contains(m.id);
 
   return SizedBox(
@@ -1159,7 +1233,7 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
       onSelected: (value) {
         switch (value) {
           case 'local_pin':
-            prov.toggleLocalPin(m.id);
+            prov.toggleLocalPin(m.id); // Метод в провайдере
             break;
           case 'global_pin':
             prov.togglePinMessage(m.id, !m.isPinned, widget.group.id);
@@ -1170,14 +1244,30 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
         }
       },
       itemBuilder: (context) => [
-        // Опция 2: Для всех
+        // Опция "Закладка" (Локальный закреп)
+        PopupMenuItem(
+          value: 'local_pin',
+          child: Row(
+            children: [
+              // ТЕПЕРЬ ПЕРЕМЕННАЯ ИСПОЛЬЗУЕТСЯ ДЛЯ ВИЗУАЛИЗАЦИИ
+              Icon(
+                isLocallyPinned ? Icons.bookmark : Icons.bookmark_border, 
+                size: 18, 
+                color: Colors.blue
+              ),
+              const SizedBox(width: 8),
+              Text(isLocallyPinned ? "Удалить закладку" : "В закладки"),
+            ],
+          ),
+        ),
+        // Опция "Закрепить для всех"
         PopupMenuItem(
           value: 'global_pin',
           child: Row(
             children: [
               Icon(m.isPinned ? Icons.push_pin : Icons.push_pin_outlined, size: 18, color: Colors.orange),
               const SizedBox(width: 8),
-              Text(m.isPinned ? "Открепить для всех" : "Закрепить для всех"),
+              Text(m.isPinned ? "Открепить" : "Закрепить"),
             ],
           ),
         ),
@@ -1197,54 +1287,42 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
   );
 }
 
+// Строка ~769
+Widget _buildChatInputArea() {
+  return Consumer<GroupProvider>(
+    builder: (context, prov, _) {
+      final group = prov.groups.firstWhere((g) => g.id == widget.group.id, orElse: () => widget.group);
+      bool bothFinished = group.ownerFinished && group.partnerFinished;
 
-  Widget _buildChatInputArea() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFF1F5F9))),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _messageController,
-              focusNode: _messageFocusNode,
-              maxLines: null,
-              decoration: InputDecoration(
-                hintText:
-                    "Напишите сообщение... (используйте @ для привязки к задаче)",
-                filled: true,
-                fillColor: const Color(0xFFF8FAFC),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(25),
-                  borderSide: BorderSide.none,
-                ),
+      if (bothFinished) {
+        // Проверяем, нет ли уже активного предложения о перезапуске в последних сообщениях
+        bool hasActiveProposal = prov.messages.any((m) => m.content.startsWith("[RESTART_PROPOSAL]"));
+
+        return Container(
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 25),
+          decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Color(0xFFF1F5F9)))),
+          child: SizedBox(
+            width: double.infinity,
+            height: 55,
+            child: ElevatedButton.icon(
+              // Если запрос уже отправлен — блокируем кнопку
+              onPressed: hasActiveProposal ? null : () => prov.proposeRestart(group.id),
+              icon: Icon(hasActiveProposal ? Icons.hourglass_top : Icons.refresh, color: Colors.white),
+              label: Text(
+                hasActiveProposal ? "ОЖИДАНИЕ ПАРТНЕРА..." : "ВОЗОБНОВИТЬ ОБМЕН НАВЫКАМИ", 
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: hasActiveProposal ? Colors.grey : const Color(0xFF0D47A1),
               ),
             ),
           ),
-          const SizedBox(width: 10),
-          CircleAvatar(
-            backgroundColor: AppColors.navy,
-            radius: 24,
-            child: IconButton(
-              icon: const Icon(Icons.send, color: Colors.white, size: 20),
-              onPressed: () {
-                if (_messageController.text.trim().isNotEmpty) {
-                  context.read<GroupProvider>().sendMessage(
-                    widget.group.id,
-                    _messageController.text.trim(),
-                  );
-                  _messageController.clear();
-                }
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+        );
+      }
+      return _buildNormalInput(); 
+    },
+  );
+}
 
   Widget _buildMentionOverlay() {
     return Positioned(
@@ -1298,73 +1376,187 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
     );
   }
 
-  Widget _buildRoadmapTab(int myId) {
-    return Consumer<GroupProvider>(
-      builder: (context, prov, _) {
-        final all = prov.roadmapSteps;
-        final List<RoadmapStepDto> tasksForMe = all
-            .where((s) => s.creatorId != myId)
-            .toList();
-        final List<RoadmapStepDto> tasksFromMe = all
-            .where((s) => s.creatorId == myId)
-            .toList();
+Widget _buildRoadmapTab(int myId) {
+  return Consumer<GroupProvider>(
+    builder: (context, prov, _) {
+      // Безопасное получение данных группы из обновленного списка провайдера
+      GroupResponse group;
+      try {
+        group = prov.groups.firstWhere((g) => g.id == widget.group.id);
+      } catch (e) {
+        // Если loadGroups еще не завершился или вернул пустой список, берем данные из конструктора
+        group = widget.group; 
+      }
+      
+      // Определяем статусы для текущего пользователя
+      bool isOwner = group.ownerId == myId;
+      // Я закончил свое обучение как ученик?
+      bool iFinishedAsStudent = isOwner ? group.ownerFinished : group.partnerFinished;
+      // Мой партнер (которого я учу) закончил свое обучение?
+      bool partnerFinishedAsStudent = isOwner ? group.partnerFinished : group.ownerFinished;
+      // Полный финал обмена
+      bool bothFinished = group.ownerFinished && group.partnerFinished;
 
-        final currentList = _roadmapFilterIndex == 0 ? tasksForMe : tasksFromMe;
+      // Разделяем задачи на активные и архивные (из прошлых циклов)
+      final activeSteps = prov.roadmapSteps.where((s) => !s.isArchived).toList();
+      final archivedSteps = prov.roadmapSteps.where((s) => s.isArchived).toList();
 
-        return Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(15),
+      // Фильтруем задачи текущего цикла по выбранной роли (Я Ученик / Я Учитель)
+      final List<RoadmapStepDto> tasksForMe = activeSteps.where((s) => s.creatorId != myId).toList();
+      final List<RoadmapStepDto> tasksFromMe = activeSteps.where((s) => s.creatorId == myId).toList();
+      
+      final currentList = _roadmapFilterIndex == 0 ? tasksForMe : tasksFromMe;
+
+      return Column(
+        children: [
+          // ПАНЕЛЬ УПРАВЛЕНИЯ
+          Container(
+            padding: const EdgeInsets.all(15),
+            decoration: BoxDecoration(
               color: Colors.white,
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      _filterTabButton("МНЕ НАЗНАЧЕНО", 0),
-                      const SizedBox(width: 10),
-                      _filterTabButton("ОТ МЕНЯ (УЧЕНИКУ)", 1),
-                      const Spacer(),
-                      if (_roadmapFilterIndex == 1) ...[
-                        // Кнопка добавления обычного задания
-                        IconButton(
-                          icon: const Icon(
-                            Icons.add_task,
-                            color: AppColors.primary,
+              border: Border(bottom: BorderSide(color: Colors.grey.withValues(alpha: 0.1))),
+            ),
+            child: Row(
+              children: [
+                _filterTabButton("Я УЧЕНИК", 0),
+                const SizedBox(width: 8),
+                _filterTabButton("Я УЧИТЕЛЬ", 1),
+                const Spacer(),
+                
+                // ЛОГИКА ДЛЯ ВКЛАДКИ "Я УЧИТЕЛЬ" (Управление учеником)
+                if (_roadmapFilterIndex == 1) ...[
+                  if (!partnerFinishedAsStudent) ...[
+                    // Если партнер еще учится - кнопки добавления активны
+                    IconButton(
+                      icon: const Icon(Icons.add_task, color: AppColors.primary),
+                      onPressed: _showAddStepDialog,
+                      tooltip: "Дать задание",
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.quiz_outlined, color: Colors.purple),
+                      onPressed: _openTestCreationScreen,
+                      tooltip: "Создать тест",
+                    ),
+                  ] else 
+                    const Text("Обучение завершено ✅", 
+                      style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold)),
+                ],
+
+                // ЛОГИКА ДЛЯ ВКЛАДКИ "Я УЧЕНИК" (Завершение своего цикла)
+                if (_roadmapFilterIndex == 0 && !iFinishedAsStudent && !bothFinished)
+                  TextButton.icon(
+                    onPressed: () {
+                      // Валидация: нельзя завершить, если есть задачи ToDo или UnderReview
+                      bool hasPending = tasksForMe.any((s) => s.status != "Done");
+                      if (hasPending) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text("Выполните все текущие задачи перед выпуском!"), 
+                            backgroundColor: Colors.orange,
                           ),
-                          onPressed: _showAddStepDialog,
-                          tooltip: "Добавить задание",
-                        ),
-                        // Кнопка перехода на страницу создания теста
-                        IconButton(
-                          icon: const Icon(
-                            Icons.quiz_outlined,
-                            color: Colors.purple,
-                          ),
-                          onPressed:
-                              _openTestCreationScreen, // ИСПОЛЬЗУЕМ НОВЫЙ МЕТОД
-                          tooltip: "Создать тест",
-                        ),
-                      ],
-                    ],
+                        );
+                      } else {
+                        // Отправляем запрос на подтверждение учителю
+                        prov.requestMyCompletion(group.id);
+                      }
+                    },
+                    icon: const Icon(Icons.verified_user_rounded, size: 18, color: Colors.orange),
+                    label: const Text("Я ЗАВЕРШИЛ ОБУЧЕНИЕ", 
+                      style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 11)),
+                  ),
+              ],
+            ),
+          ),
+
+          // СПИСОК ЗАДАЧ
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                // 1. Текущие задачи выбранной роли
+                if (currentList.isNotEmpty) ...[
+                  Text(
+                    _roadmapFilterIndex == 0 ? "МОИ УРОКИ" : "ПЛАН ДЛЯ ПАРТНЕРА", 
+                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 10, color: Colors.grey, letterSpacing: 1.2)
+                  ),
+                  const SizedBox(height: 15),
+                  ...currentList.map((s) => _buildLogicStepCard(s, myId)),
+                ] else if (!bothFinished)
+                  _buildRoadmapEmptyState(),
+
+                // 2. Архив (История всех завершенных обменов в этом чате)
+                if (archivedSteps.isNotEmpty) ...[
+                  const SizedBox(height: 30),
+                  Theme(
+                    data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                    child: ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.history_edu_rounded, color: Colors.blueGrey),
+                      title: Text(
+                        "АРХИВ ОБУЧЕНИЯ (${archivedSteps.length})", 
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blueGrey)
+                      ),
+                      children: archivedSteps.map((s) => Opacity(
+                        opacity: 0.6,
+                        child: _buildLogicStepCard(s, myId),
+                      )).toList(),
+                    ),
                   ),
                 ],
-              ),
+                const SizedBox(height: 100),
+              ],
             ),
-            Expanded(
-              child: currentList.isEmpty
-                  ? _buildRoadmapEmptyState()
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(20),
-                      itemCount: currentList.length,
-                      itemBuilder: (ctx, i) =>
-                          _buildLogicStepCard(currentList[i], myId),
-                    ),
-            ),
-          ],
-        );
-      },
-    );
-  }
+          ),
+        ],
+      );
+    },
+  );
+}
+
+Widget _buildCompletionRequestBubble(MessageDto m, bool isMe) {
+  final prov = context.read<GroupProvider>(); // Используем read для экшенов
+  final String text = m.content.split('|').last;
+
+  return FadeInUp(
+    child: Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE3F2FD), // Светло-голубой
+        borderRadius: BorderRadius.circular(25),
+        border: Border.all(color: Colors.blue.withValues(alpha:0.3), width: 2),
+      ),
+      child: Column(
+        children: [
+          Text(text, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 20),
+          if (!isMe)
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                    onPressed: () => _confirmFinish(), // ВЫЗЫВАЕМ ОБЕРТКУ ВМЕСТО ПРЯМОГО КЛИКА
+                    child: const Text("ПОДТВЕРЖДАЮ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => prov.rejectCompletion(widget.group.id),
+                    child: const Text("ЕЩЕ НЕТ"),
+                  ),
+                ),
+              ],
+            )
+          else
+            const Text("Ожидание подтверждения учителя...", style: TextStyle(color: Colors.grey, fontSize: 12)),
+        ],
+      ),
+    ),
+  );
+}
 
   Widget _filterTabButton(String label, int idx) {
     bool active = _roadmapFilterIndex == idx;
@@ -1389,12 +1581,15 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
     );
   }
 
-  Widget _buildLogicStepCard(RoadmapStepDto s, int myId) {
+Widget _buildLogicStepCard(RoadmapStepDto s, int myId) {
     bool isTeacher = s.creatorId == myId;
     bool isDone = s.status == "Done";
     bool isReview = s.status == "UnderReview";
-    // Задание отклонено, если есть коммент и статус вернулся в ToDo
     bool isRejected = s.teacherComment != null && s.status == "ToDo";
+
+    // ЛОГИКА ПРОСТОГО ЧЕКБОКСА:
+    // Если это не тест и не обязательное задание (isRequired = false)
+    bool isSimpleTask = !s.isTest && !s.isRequired;
 
     return FadeInUp(
       child: Container(
@@ -1404,16 +1599,16 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.03),
+              color: Colors.black.withValues(alpha:0.03),
               blurRadius: 15,
               offset: const Offset(0, 5),
             ),
           ],
           border: Border.all(
             color: isDone
-                ? Colors.green.withOpacity(0.2)
+                ? Colors.green.withValues(alpha:0.2)
                 : (isRejected
-                      ? Colors.orange.withOpacity(0.3)
+                      ? Colors.orange.withValues(alpha:0.3)
                       : Colors.grey.shade100),
             width: 2,
           ),
@@ -1426,8 +1621,30 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
                 vertical: 10,
               ),
 
-              // --- ЛОГИКА ИКОНКИ (Галочка ТОЛЬКО если статус Done) ---
-              leading: _buildStepStatusIcon(s, isDone),
+              // СЛЕВА: Чекбокс для простых задач или иконка статуса для сложных
+              leading: isSimpleTask
+                  ? Transform.scale(
+                      scale: 1.2,
+                      child: Checkbox(
+                        value: isDone,
+                        activeColor: Colors.green,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        // Учитель не может отмечать за ученика, только ученик сам
+                        onChanged: isTeacher || s.isArchived
+                            ? null
+                            : (val) {
+                                context
+                                    .read<GroupProvider>()
+                                    .toggleStepComplete(
+                                      stepId: s.id,
+                                      groupId: widget.group.id,
+                                    );
+                              },
+                      ),
+                    )
+                  : _buildStepStatusIcon(s, isDone),
 
               title: Text(
                 s.content,
@@ -1442,67 +1659,24 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
                 style: const TextStyle(fontSize: 11),
               ),
               trailing: _buildTaskActionMenu(s, isTeacher),
+              
+              // Если задача сложная, нажатие открывает диалог сдачи/теста
+              onTap: (isSimpleTask || s.isArchived) 
+                ? null 
+                : () => _handlePartnerTaskAction(s),
             ),
 
-            // --- БЛОК ПРАВОК ОТ УЧИТЕЛЯ (Виден ученику сразу в списке) ---
-            if (isRejected)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 15),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.orange.withOpacity(0.2)),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Icon(
-                        Icons.info_outline_rounded,
-                        size: 16,
-                        color: Colors.orange,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              "НУЖНЫ ПРАВКИ:",
-                              style: TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.w900,
-                                color: Colors.orange,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              s.teacherComment!,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: AppColors.navy,
-                                fontWeight: FontWeight.w600,
-                                height: 1.3,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+            if (isRejected) _buildRejectedCommentBlock(s.teacherComment!),
 
-            // --- БЛОК ТЕСТА ---
-            if (s.isTest) _buildTestStepBlock(s, isTeacher, isDone),
+            // Контентная часть (показываем кнопки только если задача активна и не простая)
+            if (!s.isArchived) ...[
+              if (s.isTest)
+                _buildTestStepBlock(s, isTeacher, isDone)
+              else if (s.isRequired && !isDone)
+                _buildArtifactSubmissionBlock(s, isTeacher, isReview),
+            ],
 
-            // --- БЛОК СДАЧИ / ПРОВЕРКИ (Для заданий с файлами) ---
-            if (!s.isTest && s.isRequired && !isDone)
-              _buildArtifactSubmissionBlock(s, isTeacher, isReview),
-
-            // --- КНОПКИ РЕСУРСОВ ---
+            // Ресурсы (ссылки/файлы) показываем всегда
             if (s.instructionUrl != null || s.artifactUrl != null)
               _buildStepResourcesRow(s),
 
@@ -1513,13 +1687,214 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
     );
   }
 
+
+
+  // Метод для обработки нажатия на "сложные" задачи (тесты или задания с артефактами)
+  void _handlePartnerTaskAction(RoadmapStepDto task) {
+    if (task.isArchived) return; // В архиве действия не выполняются
+
+    // 1. Если это тест
+    if (task.isTest) {
+      _showTestActionDialog(task);
+      return;
+    }
+
+    // 2. Если это обязательное задание (требует отчет/артефакт)
+    if (task.isRequired) {
+      _showArtifactStatusDialog(task);
+    }
+  }
+
+  // Вспомогательное окно для перехода к тесту
+  void _showTestActionDialog(RoadmapStepDto task) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.quiz, color: Colors.purple),
+            const SizedBox(width: 10),
+            const Text("ТЕСТ"),
+          ],
+        ),
+        content: Text(
+          "Пройти тест: ${task.content}?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("ОТМЕНА"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _startTest(task); // Вызов существующего метода начала теста
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+            child: const Text("НАЧАТЬ", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+  // Виджет правки от учителя (для красоты и wrapping)
+  Widget _buildRejectedCommentBlock(String comment) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 15),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha:0.08),
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.edit_note, color: Colors.orange, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              "ПРАВКИ: $comment",
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.navy,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildArtifactSubmissionBlock(
+    RoadmapStepDto s,
+    bool isTeacher,
+    bool isReview,
+  ) {
+    bool isDone = s.status == "Done";
+
+    if (isTeacher) {
+      if (isReview) {
+        return Padding(
+          padding: const EdgeInsets.all(15),
+          child: Column(
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha:0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  "УЧЕНИК ПРИСЛАЛ РАБОТУ",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 10,
+                    color: Colors.orange,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      // ИСПРАВЛЕНО: Именованные аргументы
+                      onPressed: () => context.read<GroupProvider>().verifyStep(
+                        stepId: s.id,
+                        approve: true,
+                        groupId: widget.group.id,
+                      ),
+                      icon: const Icon(
+                        Icons.check,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                      label: const Text(
+                        "ПРИНЯТЬ",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _showTeacherDeclineDialog(s.id),
+                      icon: const Icon(
+                        Icons.edit_note,
+                        color: Colors.orange,
+                        size: 18,
+                      ),
+                      label: const Text(
+                        "ПРАВКИ",
+                        style: TextStyle(
+                          color: Colors.orange,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.orange),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      }
+      return const SizedBox.shrink();
+    } else {
+      // Вид для УЧЕНИКА
+      if (isDone) return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.all(15),
+        child: SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: ElevatedButton.icon(
+            onPressed: () => _showArtifactStatusDialog(s),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isReview ? Colors.blueGrey : AppColors.navy,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15),
+              ),
+            ),
+            icon: Icon(
+              isReview ? Icons.hourglass_bottom : Icons.cloud_upload,
+              color: Colors.white,
+            ),
+            label: Text(
+              isReview ? "НА ПРОВЕРКЕ" : "СДАТЬ РАБОТУ",
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
   // Обновленный блок теста с кнопкой "Сдать"
   Widget _buildTestStepBlock(RoadmapStepDto s, bool isTeacher, bool isDone) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.purple.withOpacity(0.05),
+        color: Colors.purple.withValues(alpha:0.05),
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -1624,14 +1999,15 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
       width: 46,
       height: 46,
       decoration: BoxDecoration(
-        color: col.withOpacity(0.1),
+        color: col.withValues(alpha:0.1),
         shape: BoxShape.circle,
       ),
       child: Icon(icon, color: col, size: 22),
     );
   }
 
-  void _showAddLinkDialog(int stepId) {
+  // Добавьте второй параметр int groupId сюда
+  void _showAddLinkDialog(int stepId, int groupId) {
     final linkCtrl = TextEditingController();
 
     MainDashboardLayout.showHiveDialog(
@@ -1639,8 +2015,7 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
       Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
-          mainAxisSize: MainAxisSize
-              .min, // Окно будет занимать минимум места по вертикали
+          mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.link_rounded, size: 48, color: AppColors.primary),
             const SizedBox(height: 20),
@@ -1654,44 +2029,24 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
             ),
             const SizedBox(height: 10),
             const Text(
-              "Вставьте URL-адрес вашего ответа. Новый ответ заменит предыдущий и сбросит правки учителя.",
+              "Вставьте URL-адрес вашего ответа (например, Google Drive или GitHub)",
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 25),
-
-            // Поле ввода с ограничением
             TextField(
               controller: linkCtrl,
-              autofocus: true,
-              style: const TextStyle(fontSize: 14),
-              decoration:
-                  AppDecorations.smartInput(
-                    "https://example.com/your-work",
-                    Icons.insert_link_rounded,
-                  ).copyWith(
-                    helperText: "Обязательно http:// или https://",
-                    // Это предотвратит бесконечное расширение поля вширь
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 15,
-                      vertical: 15,
-                    ),
-                  ),
+              decoration: AppDecorations.smartInput(
+                "https://...",
+                Icons.insert_link,
+              ),
             ),
-
             const SizedBox(height: 30),
-
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
                     onPressed: () => Navigator.pop(context),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
                     child: const Text("ОТМЕНА"),
                   ),
                 ),
@@ -1699,48 +2054,14 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () async {
-                      String url = linkCtrl.text.trim();
+                      if (linkCtrl.text.isEmpty) return;
 
-                      // Валидация протокола
-                      if (url.isEmpty ||
-                          (!url.startsWith('http://') &&
-                              !url.startsWith('https://'))) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              "Ошибка: Ссылка должна начинаться с http:// или https://",
-                            ),
-                            backgroundColor: Colors.redAccent,
-                          ),
-                        );
-                        return;
-                      }
-
-                      // Логика отправки (находим шаг и groupId)
-                      final groupProv = context.read<GroupProvider>();
-                      // Пытаемся найти шаг в общем списке
-                      final step = groupProv.allRoadmapSteps.firstWhere(
-                        (e) => e.id == stepId,
-                        orElse: () => RoadmapStepDto(
-                          id: -1,
-                          content: '',
-                          dueDate: DateTime.now(),
-                          status: '',
-                          creatorId: 0,
-                        ),
-                      );
-
-                      int finalGroupId = step.id != -1 ? step.groupId : 0;
-                      // Если мы в чате, используем ID группы из виджета
-                      if (finalGroupId == 0 && widget is ChatScreen) {
-                        finalGroupId = (widget as ChatScreen).group.id;
-                      }
-
-                      await groupProv.submitStepResult(
-                        stepId,
-                        url,
-                        "Ответ обновлен",
-                        finalGroupId,
+                      // ВАЖНО: Используем groupId, который теперь приходит в метод
+                      await context.read<GroupProvider>().submitStepResult(
+                        stepId: stepId,
+                        artifactUrl: linkCtrl.text.trim(),
+                        studentComment: "Добавлена ссылка",
+                        groupId: groupId, // Передаем его в провайдер
                       );
 
                       Navigator.pop(context);
@@ -1748,10 +2069,6 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.navy,
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
                     ),
                     child: const Text(
                       "ОТПРАВИТЬ",
@@ -1770,194 +2087,173 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
     );
   }
 
-  // 1. Добавьте этот метод внутрь _ChatScreenState
-  void _refreshData() {
-    context.read<GroupProvider>().loadRoadmap(widget.group.id);
-  }
+void _showRatingDialog() {
+  // 1. Проверка: если окно уже открыто, не открываем его снова
+  if (_isRatingDialogShowing) return;
+  _isRatingDialogShowing = true;
 
-  Widget _buildArtifactSubmissionBlock(
-    RoadmapStepDto s,
-    bool isTeacher,
-    bool isReview,
-  ) {
-    // Работа отклонена учителем (есть коммент, но еще не исправлено)
-    bool isRejected = s.teacherComment != null && s.status == "ToDo";
-    bool isDone = s.status == "Done";
+  int selectedRating = 5;
+  final commentCtrl = TextEditingController();
 
-    return Padding(
-      padding: const EdgeInsets.all(15),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (isTeacher) ...[
-            // --- ВИД ДЛЯ УЧИТЕЛЯ ---
-            if (isReview)
-              // Учитель видит кнопки, только если работа СДАНА (UnderReview)
-              Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(
-                          Icons.pending_actions,
-                          color: Colors.orange,
-                          size: 18,
-                        ),
-                        SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            "Работа сдана на проверку",
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.orange,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: () => context
-                              .read<GroupProvider>()
-                              .verifyStep(s.id, true, "", widget.group.id),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          icon: const Icon(
-                            Icons.check,
-                            color: Colors.white,
-                            size: 18,
-                          ),
-                          label: const Text(
-                            "ПРИНЯТЬ",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => _showTeacherDeclineDialog(s.id),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Colors.orange),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          icon: const Icon(
-                            Icons.edit_note,
-                            color: Colors.orange,
-                            size: 18,
-                          ),
-                          label: const Text(
-                            "ПРАВКИ",
-                            style: TextStyle(
-                              color: Colors.orange,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              )
-            else if (isRejected)
-              // НОВОЕ: Если учитель уже отправил правки — показываем статус ожидания
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.blue.withOpacity(0.1)),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.hourglass_top_rounded,
-                      color: Colors.blue,
-                      size: 16,
-                    ),
-                    SizedBox(width: 8),
-                    Text(
-                      "Ждем ответ от ученика (правки отправлены)",
-                      style: TextStyle(
-                        color: Colors.blue,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              // Если работа еще не сдавалась или уже принята
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  isDone
-                      ? "✅ Задание успешно выполнено"
-                      : "⏳ Ожидание первой загрузки ответа",
-                  style: const TextStyle(
-                    color: Colors.grey,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
+  MainDashboardLayout.showHiveDialog(
+    context,
+    StatefulBuilder(
+      builder: (ctx, setSt) => Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Иконка и заголовок
+            const Icon(Icons.stars_rounded, size: 64, color: Colors.amber),
+            const SizedBox(height: 16),
+            Text(
+              "ОБУЧЕНИЕ ЗАВЕРШЕНО!",
+              style: GoogleFonts.manrope(
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+                color: AppColors.navy,
               ),
-          ] else ...[
-            // --- ВИД ДЛЯ УЧЕНИКА (остается без изменений) ---
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "Пожалуйста, оцените работу вашего партнера. Ваш отзыв влияет на его BeePower.",
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey, fontSize: 13),
+            ),
+            const SizedBox(height: 25),
+
+            // Выбор звезд
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(5, (i) {
+                return IconButton(
+                  onPressed: () => setSt(() => selectedRating = i + 1),
+                  icon: Icon(
+                    i < selectedRating ? Icons.star_rounded : Icons.star_outline_rounded,
+                    color: Colors.amber,
+                    size: 42,
+                  ),
+                );
+              }),
+            ),
+            const SizedBox(height: 20),
+
+            // Поле для текстового отзыва
+            TextField(
+              controller: commentCtrl,
+              maxLines: 3,
+              style: const TextStyle(fontSize: 14),
+              decoration: AppDecorations.smartInput(
+                "Ваш отзыв о партнере...",
+                Icons.rate_review_outlined,
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            // Кнопка отправки
             SizedBox(
               width: double.infinity,
-              height: 50,
-              child: ElevatedButton.icon(
-                onPressed: () => _showArtifactStatusDialog(s),
+              height: 55,
+              child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: isRejected
-                      ? Colors.orange
-                      : (isReview ? Colors.blueGrey : AppColors.navy),
+                  backgroundColor: AppColors.navy,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                icon: Icon(
-                  isRejected
-                      ? Icons.help_outline
-                      : (isReview ? Icons.hourglass_empty : Icons.upload_file),
-                  color: Colors.white,
-                ),
-                label: Text(
-                  isRejected
-                      ? "ЕСТЬ ПРАВКИ (ПЕРЕСДАТЬ)"
-                      : (isReview ? "НА ПРОВЕРКЕ" : "СДАТЬ РАБОТУ"),
-                  style: const TextStyle(
+                onPressed: () async {
+                  final userProv = context.read<UserProvider>();
+                  
+                  // Вызываем API отправки отзыва
+                  bool ok = await userProv.submitReview(
+                    widget.group.otherUserId!, 
+                    selectedRating, 
+                    commentCtrl.text.trim(),
+                  );
+
+                  if (mounted) {
+                    if (ok) {
+                      // Сбрасываем флаг, закрываем диалог и выходим из чата
+                      _isRatingDialogShowing = false;
+                      Navigator.pop(ctx); 
+                      Navigator.pop(context); // Выход в список чатов
+                      
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("Спасибо! Ваш отзыв учтен."),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    } else {
+                      // Если текст не прошел модерацию (мат)
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("Отзыв содержит недопустимую лексику!"),
+                          backgroundColor: Colors.redAccent,
+                        ),
+                      );
+                    }
+                  }
+                },
+                child: const Text(
+                  "ОТПРАВИТЬ И ВЫЙТИ",
+                  style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
+                    letterSpacing: 1,
                   ),
                 ),
               ),
             ),
           ],
+        ),
+      ),
+    ),
+  ).then((_) {
+    // Если пользователь закрыл диалог кликом мимо или кнопкой назад,
+    // сбрасываем флаг, чтобы при следующем входе/событии окно могло открыться снова
+    _isRatingDialogShowing = false;
+  });
+}
+
+  // 1. Добавьте этот метод внутрь _ChatScreenState
+  void _refreshData() {
+    context.read<GroupProvider>().loadRoadmap(widget.group.id);
+  }
+
+  void _showTeacherDeclineDialog(int stepId) {
+    final commentCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Что нужно исправить?"),
+        content: TextField(
+          controller: commentCtrl,
+          maxLines: 3,
+          decoration: AppDecorations.smartInput(
+            "Замечания учителя...",
+            Icons.comment,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("ОТМЕНА"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (commentCtrl.text.isNotEmpty) {
+                context.read<GroupProvider>().verifyStep(
+                  stepId: stepId,
+                  groupId: widget.group.id,
+                  approve: false,
+                  comment: commentCtrl.text.trim(),
+                );
+                Navigator.pop(ctx);
+              }
+            },
+            child: const Text("ОТПРАВИТЬ ПРАВКИ"),
+          ),
         ],
       ),
     );
@@ -1997,9 +2293,9 @@ Widget _buildMessageMenu(MessageDto m, bool isMe) {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: col.withOpacity(0.1),
+          color: col.withValues(alpha:0.1),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: col.withOpacity(0.2)),
+          border: Border.all(color: col.withValues(alpha:0.2)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

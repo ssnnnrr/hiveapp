@@ -7,10 +7,11 @@ class NotificationProvider extends ChangeNotifier {
   List<AppNotification> _notifications = [];
   bool _isLoading = false;
 
-  bool get isLoading => _isLoading;
   List<AppNotification> get notifications => _notifications;
+  bool get isLoading => _isLoading;
 
 Future<void> loadNotifications() async {
+  _notifications = [];
     _isLoading = true;
     notifyListeners();
     try {
@@ -19,15 +20,12 @@ Future<void> loadNotifications() async {
         final List fetched = response.data;
         final all = fetched.map((e) => AppNotification.fromJson(e)).toList();
         
-        // УЛУЧШЕННАЯ ДЕДУПЛИКАЦИЯ: фильтруем по заголовку, сообщению и ID задачи
+        // ДЕДУПЛИКАЦИЯ: Если ID и Тип совпадают — это одно и то же уведомление
         final Map<String, AppNotification> uniqueMap = {};
         for (var n in all) {
-          // Создаем уникальный ключ на основе контента
-          final contentKey = "${n.title}_${n.message}_${n.taskId}_${n.roadmapStepId}";
-          
-          // Если уведомление с таким смыслом уже есть, оставляем более новое (по id или дате)
-          if (!uniqueMap.containsKey(contentKey)) {
-            uniqueMap[contentKey] = n;
+          final key = "${n.type}_${n.data}"; 
+          if (!uniqueMap.containsKey(key)) {
+            uniqueMap[key] = n;
           }
         }
         
@@ -41,101 +39,61 @@ Future<void> loadNotifications() async {
       notifyListeners();
     }
 }
-void syncOverdueNotifications({
-  required List<TaskResponse> tasks,
-  required List<EventResponse> events,
-  required List<RoadmapStepDto> roadmapSteps,
-}) {
-  final now = DateTime.now();
-  final todayStart = DateTime(now.year, now.month, now.day);
-  bool changed = false;
-
-  _notifications.removeWhere((n) {
-    final int? entityId = int.tryParse(n.data ?? '');
-    if (entityId == null) return false;
-
-    // Сравнение для Шагов к цели
-    if (n.type == "TaskOverdue") {
-      final task = tasks.where((t) => t.id == entityId).firstOrNull;
-      if (task != null) {
-        bool isDone = task.status == "Done" || task.completions.isNotEmpty;
-        bool isNotOverdue = !task.dueDate.toLocal().isBefore(todayStart);
-        if (isDone || isNotOverdue) return true;
-      } else { return true; }
-    }
-
-    // Сравнение для Событий (минута в минуту)
-    if (n.type == "EventOverdue") {
-      final event = events.where((e) => e.id == entityId).firstOrNull;
-      if (event != null) {
-        bool isNotOverdue = !event.eventDate.toLocal().isBefore(now);
-        if (event.isCompleted || isNotOverdue) return true;
-      } else { return true; }
-    }
-
-    // Сравнение для Заданий чата
-    if (n.type == "RoadmapOverdue") {
-      final step = roadmapSteps.where((s) => s.id == entityId).firstOrNull;
-      if (step != null) {
-        bool isHandled = step.status == "Done" || step.status == "UnderReview";
-        bool isNotOverdue = !step.dueDate.toLocal().isBefore(todayStart);
-        if (isHandled || isNotOverdue) return true;
-      } else { return true; }
-    }
-
-    return false;
-  });
-
-  notifyListeners();
-}
 
 
-void clearData() {
-  _notifications = [];
-  _isLoading = false;
-  notifyListeners();
-}
-
-  Future<void> markAsRead(int id) async {
-    try {
-      await _api.dio.post("/Notifications/$id/read");
-      _notifications.removeWhere((n) => n.id == id);
-      notifyListeners();
-    } catch (e) {
-      debugPrint("Ошибка markAsRead: $e");
-    }
+  void handleSignalRNotificationDeleted(int noteId) {
+    _notifications.removeWhere((n) => n.id == noteId);
+    notifyListeners();
   }
 
-  // Локальное удаление уведомления (без API запроса)
-  void removeNotification(int id) {
+  // ЭТАП 6: Мгновенное удаление просрочки из списка (локально)
+  void removeOverdueNotification(int itemId, String type) {
+    _notifications.removeWhere((n) {
+      final int? entityId = int.tryParse(n.data ?? '');
+      if (type == "task") return n.type == "TaskOverdue" && entityId == itemId;
+      if (type == "event") return n.type == "EventOverdue" && entityId == itemId;
+      if (type == "roadmap") return n.type == "RoadmapOverdue" && entityId == itemId;
+      return false;
+    });
+    notifyListeners();
+  }
+
+  // Синхронизация всех уведомлений (удаляем те, что уже не просрочены)
+  void syncOverdueNotifications({
+    required List<TaskResponse> tasks,
+    required List<EventResponse> events,
+    required List<RoadmapStepDto> roadmapSteps,
+  }) {
+    final now = DateTime.now();
+    _notifications.removeWhere((n) {
+      final int? entityId = int.tryParse(n.data ?? '');
+      if (entityId == null) return false;
+
+      if (n.type == "TaskOverdue") {
+        final t = tasks.where((t) => t.id == entityId).firstOrNull;
+        return t == null || t.status == "Done" || !t.dueDate.isBefore(now);
+      }
+      if (n.type == "EventOverdue") {
+        final e = events.where((e) => e.id == entityId).firstOrNull;
+        return e == null || e.isCompleted || !e.eventDate.isBefore(now);
+      }
+      if (n.type == "RoadmapOverdue") {
+        final s = roadmapSteps.where((s) => s.id == entityId).firstOrNull;
+        return s == null || s.status == "Done" || !s.dueDate.isBefore(now);
+      }
+      return false;
+    });
+    notifyListeners();
+  }
+
+  Future<void> markAsRead(int id) async {
+    await _api.dio.post("/Notifications/$id/read");
     _notifications.removeWhere((n) => n.id == id);
     notifyListeners();
   }
 
-  // Локальное удаление нескольких уведомлений
-  void removeNotifications(List<int> ids) {
-    _notifications.removeWhere((n) => ids.contains(n.id));
+  void clearData() {
+    _notifications = [];
     notifyListeners();
-  }
-
-
-// В класс NotificationProvider добавим:
-void removeOverdueNotification(int itemId, String type) {
-  // Ищем уведомление по taskId или roadmapStepId
-  _notifications.removeWhere((n) => 
-    (type == "task" && n.taskId == itemId) || 
-    (type == "roadmap" && n.roadmapStepId == itemId)
-  );
-  notifyListeners();
-}
-
-  Future<void> markAllAsRead() async {
-    try {
-      await _api.dio.post("/Notifications/mark-read");
-      _notifications.clear();
-      notifyListeners();
-    } catch (e) {
-      debugPrint(e.toString());
-    }
   }
 }

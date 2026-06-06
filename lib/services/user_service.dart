@@ -127,6 +127,49 @@ class UserService {
       return false;
     }
   }
+
+
+// lib/services/user_service.dart
+
+Future<String?> getVerificationTest(int skillId) async {
+  try {
+    final response = await _api.dio.get("/Verification/get-test/$skillId");
+    if (response.statusCode == 200) {
+      // Бэкенд возвращает { "testData": "string_json" }
+      dynamic data = response.data;
+      if (data is Map && data.containsKey('testData')) {
+        String testData = data['testData'];
+        
+        // Финальная проверка на "битость" перед передачей в провайдер
+        if (testData.startsWith('[') && testData.endsWith(']')) {
+          return testData;
+        }
+      }
+    }
+    return null;
+  } on DioException catch (e) {
+    debugPrint("Network Error in getVerificationTest: ${e.message}");
+    return null;
+  } catch (e) {
+    debugPrint("General Error in getVerificationTest: $e");
+    return null;
+  }
+}
+
+Future<Map<String, dynamic>?> submitVerification(int skillId, double score) async {
+  try {
+    final response = await _api.dio.post(
+      "/Verification/submit-result",
+      data: {"skillId": skillId, "score": score},
+    );
+    if (response.statusCode == 200) {
+      return response.data; // Возвращает { isVerified: bool, message: string }
+    }
+  } catch (e) {
+    debugPrint("UserService Error [submitVerification]: $e");
+  }
+  return null;
+}
   
 
 Future<List<UserDto>> findPartners({int? skillId, required String type, String? query}) async {

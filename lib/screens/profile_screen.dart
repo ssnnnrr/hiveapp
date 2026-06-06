@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:hive_app/screens/verification_test_screen.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/user_provider.dart';
@@ -30,7 +32,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  @override
+ @override
   Widget build(BuildContext context) {
     final prov = context.watch<UserProvider>();
     final profile = prov.myProfile;
@@ -51,10 +53,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     constraints: const BoxConstraints(maxWidth: 800),
                     child: Column(
                       children: [
+                        // 1. Основная информация (Имя, Почта, Аватар)
                         _buildMainInfoCard(profile),
                         const SizedBox(height: 25),
+
+                        // 2. БЛОК АНАЛИТИКИ (ВЫЗОВ ДОБАВЛЕН ТУТ - Исправляет ошибку)
+                        _buildAnalyticsSection(profile),
+                        const SizedBox(height: 25),
                         
-                        // ТЕПЕРЬ ТОЛЬКО ПАРТНЕРЫ (НА ВСЮ ШИРИНУ)
+                        // 3. Статистика партнеров
                         _buildStatCard(
                           "ВАШИ АКТИВНЫЕ ПАРТНЕРЫ", 
                           prov.friends.length.toString(), 
@@ -64,11 +71,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
 
                         const SizedBox(height: 25),
+
+                        // 4. Секции навыков
                         _buildSkillsSection("Я МОГУ НАУЧИТЬ", "Teaching", profile.skills, AppColors.navy),
                         const SizedBox(height: 15),
                         _buildSkillsSection("Я ХОЧУ ВЫУЧИТЬ", "Learning", profile.skills, Colors.green),
                         
                         const SizedBox(height: 35),
+
+                        // 5. Кнопка настроек
                         SizedBox(
                           width: double.infinity,
                           height: 60,
@@ -102,7 +113,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         borderRadius: BorderRadius.circular(30),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04), 
+            color: Colors.black.withValues(alpha:0.04), 
             blurRadius: 20,
             offset: const Offset(0, 10)
           )
@@ -142,6 +153,232 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+
+  Widget _buildSkillChip(UserSkillDto s, bool isMyProfile) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: s.isAiVerified ? Colors.blue.shade200 : Colors.grey.shade200),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(s.skillName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+        if (s.isAiVerified) ...[
+          const SizedBox(width: 4),
+          const Icon(Icons.verified, color: Colors.blue, size: 16), // СИНЯЯ ГАЛОЧКА
+        ] else if (isMyProfile && s.type == "Teaching") ...[
+          const SizedBox(width: 8),
+          InkWell(
+            onTap: () => _startVerification(s),
+            child: const Icon(Icons.security_rounded, color: Colors.orange, size: 16), // Кнопка аттестации
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
+
+// 1. Находим и ЗАМЕНЯЕМ старый метод _buildAnalyticsSection на этот:
+Widget _buildAnalyticsSection(UserProfileDto profile) {
+  return InkWell(
+    onTap: () => _showAllReviews(profile.reviews),
+    borderRadius: BorderRadius.circular(24),
+    child: Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(
+        color: Colors.white, 
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.02), blurRadius: 10)],
+      ),
+      child: Column(
+        children: [
+          const Text("ВАШ РЕЙТИНГ", 
+            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: Colors.grey, letterSpacing: 1.2)),
+          const SizedBox(height: 15),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.star_rounded, color: Colors.amber, size: 40),
+              const SizedBox(width: 10),
+              Text(
+                profile.rating.toStringAsFixed(1), 
+                style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: AppColors.navy)
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            "На основе ${profile.reviews.length} отзывов",
+            style: const TextStyle(color: Colors.grey, fontSize: 13),
+          ),
+          const SizedBox(height: 5),
+          const Text(
+            "Нажмите, чтобы прочитать отзывы", 
+            style: TextStyle(color: Colors.blue, fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+// 1. Исправленный метод показа отзывов (исправлена опечатка в Colors.grey[50])
+void _showAllReviews(List<ReviewDto> reviews) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+    ),
+    builder: (ctx) => Column(
+      children: [
+        const SizedBox(height: 15),
+        // Полоска вверху модального окна
+        Container(
+          width: 40, 
+          height: 4, 
+          decoration: BoxDecoration(
+            color: Colors.grey[300], 
+            borderRadius: BorderRadius.circular(10)
+          )
+        ),
+        const Padding(
+          padding: EdgeInsets.all(20),
+          child: Text("ОТЗЫВЫ ПАРТНЕРОВ", 
+            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: AppColors.navy)),
+        ),
+        Expanded(
+          child: reviews.isEmpty 
+            ? const Center(child: Text("У вас пока нет отзывов"))
+            : ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: reviews.length,
+                itemBuilder: (ctx, i) => Container(
+                  margin: const EdgeInsets.only(bottom: 15),
+                  padding: const EdgeInsets.all(15),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50], // ОШИБКА ИСПРАВЛЕНА: удалено лишнее слово Nord
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.grey.shade100)
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const CircleAvatar(
+                            radius: 15, 
+                            backgroundColor: AppColors.accent,
+                            child: Icon(Icons.person, size: 15, color: AppColors.navy)
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            reviews[i].reviewerName, 
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)
+                          ),
+                          const Spacer(),
+                          Text(
+                            reviews[i].rating.toString(),
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const Icon(Icons.star_rounded, color: Colors.amber, size: 18),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        reviews[i].comment, 
+                        style: const TextStyle(fontSize: 13, height: 1.4, color: Colors.black87)
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+        ),
+        const SizedBox(height: 20),
+      ],
+    ),
+  );
+}
+
+
+void _startVerification(UserSkillDto s) async {
+  // 1. Показываем ОДНО единственное модальное окно загрузки
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => Center(
+      child: Container(
+        padding: const EdgeInsets.all(30),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(25),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(color: AppColors.navy),
+            const SizedBox(height: 20),
+            Text(
+              "Генерация теста...",
+              style: GoogleFonts.manrope(
+                fontWeight: FontWeight.bold,
+                color: AppColors.navy,
+                decoration: TextDecoration.none, // Убираем желтую черту под текстом
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  final prov = context.read<UserProvider>();
+  
+  // 2. Запрашиваем данные (провайдер теперь не меняет глобальный флаг загрузки)
+  final testDataRaw = await prov.getVerificationTest(s.skillId);
+
+  if (!mounted) return;
+  
+  // 3. Закрываем модалку загрузки
+  Navigator.of(context, rootNavigator: true).pop();
+
+  if (testDataRaw != null && testDataRaw.isNotEmpty) {
+    try {
+      final List<dynamic> questions = jsonDecode(testDataRaw);
+      
+      // 4. Переходим к тесту
+      Navigator.push(context, MaterialPageRoute(
+        builder: (_) => VerificationTestScreen(
+          skillId: s.skillId, 
+          skillName: s.skillName, 
+          questions: questions,
+        )
+      ));
+    } catch (e) {
+      _showErrorSnackBar("Ошибка в структуре теста. Попробуйте еще раз.");
+    }
+  } else {
+    _showErrorSnackBar("Не удалось связаться с ИИ. Проверьте соединение.");
+  }
+}
+
+// Хелпер для вывода ошибок
+void _showErrorSnackBar(String message) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(message),
+      backgroundColor: Colors.redAccent,
+      behavior: SnackBarBehavior.floating,
+    ),
+  );
+}
+
   // Широкая карточка статистики
   Widget _buildStatCard(String label, String value, IconData icon, Color col, {VoidCallback? onTap}) {
     return Material(
@@ -155,8 +392,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           padding: const EdgeInsets.all(30),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(24),
-            border: onTap != null ? Border.all(color: col.withOpacity(0.1), width: 2) : null,
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10)],
+            border: onTap != null ? Border.all(color: col.withValues(alpha:0.1), width: 2) : null,
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.02), blurRadius: 10)],
           ),
           child: Row(
             children: [
@@ -262,39 +499,40 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildSkillsSection(String title, String type, List<UserSkillDto> skills, Color color) {
-    final filtered = skills.where((s) => s.type == type).toList();
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(25),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(title, style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: color, letterSpacing: 1)),
+Widget _buildSkillsSection(String title, String type, List<UserSkillDto> skills, Color color) {
+  final filtered = skills.where((s) => s.type == type).toList();
+  final auth = context.read<AuthProvider>();
+  final isMyProfile = auth.user?.id == context.read<UserProvider>().myProfile?.id;
+
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(25),
+    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(title, style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: color, letterSpacing: 1)),
+            if (isMyProfile)
               IconButton(
                 icon: const Icon(Icons.add_circle_outline, size: 20),
                 onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SkillCatalogScreen(type: type))).then((_) => _refresh()),
               )
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: filtered.isEmpty 
-              ? [const Text("Навыки не добавлены", style: TextStyle(color: Colors.grey, fontSize: 13))]
-              : filtered.map((s) => Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
-                  decoration: BoxDecoration(color: color.withOpacity(0.05), borderRadius: BorderRadius.circular(10), border: Border.all(color: color.withOpacity(0.1))),
-                  child: Text(s.skillName, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)),
-                )).toList(),
-          ),
-        ],
-      ),
-    );
-  }
+          ],
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: filtered.isEmpty 
+            ? [const Text("Навыки не добавлены", style: TextStyle(color: Colors.grey, fontSize: 13))]
+            // ИСПРАВЛЕНО: Теперь вызываем _buildSkillChip
+            : filtered.map((s) => _buildSkillChip(s, isMyProfile)).toList(),
+        ),
+      ],
+    ),
+  );
+}
 }

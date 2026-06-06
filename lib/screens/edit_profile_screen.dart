@@ -1,9 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../providers/user_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/main_dashboard_layout.dart';
@@ -37,7 +35,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final p = context.read<UserProvider>().myProfile;
     if (p != null) {
       _nameCtrl.text = p.username;
-      _isPrivate = p.isPrivate;
       _base64Image = p.avatarUrl;
     }
     // Слушатели для живой проверки
@@ -211,7 +208,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       title: const Text("Скрытый профиль", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                       subtitle: const Text("Ваши цели будут видеть только партнеры", style: TextStyle(fontSize: 11)),
                       value: _isPrivate,
-                      activeColor: AppColors.primary,
+                      activeThumbColor: AppColors.primary,
                       onChanged: (v) => setState(() => _isPrivate = v),
                     ),
                   ]),
@@ -317,9 +314,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: isMet ? Colors.green.withOpacity(0.1) : Colors.grey.shade100,
+        color: isMet ? Colors.green.withValues(alpha:0.1) : Colors.grey.shade100,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: isMet ? Colors.green.withOpacity(0.3) : Colors.grey.shade300),
+        border: Border.all(color: isMet ? Colors.green.withValues(alpha:0.3) : Colors.grey.shade300),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -341,7 +338,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: AppColors.primary.withOpacity(0.2), width: 3),
+                border: Border.all(color: AppColors.primary.withValues(alpha:0.2), width: 3),
               ),
               child: CircleAvatar(
                 radius: 60,
@@ -379,7 +376,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 20)],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.03), blurRadius: 20)],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

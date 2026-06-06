@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/user_provider.dart';
 import '../providers/group_provider.dart';
-import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 import '../models/all_models.dart';
 import '../widgets/main_dashboard_layout.dart';
@@ -87,10 +86,13 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
                       Expanded(child: _buildSkillBlock("ИЗУЧАЕТ", profile.skills, "Learning", Colors.green)),
                     ],
                   ),
-                  
-                  // СЕКЦИЯ ОТЗЫВОВ УДАЛЕНА ОТСЮДА
-                  
-                  const SizedBox(height: 120), 
+
+                  const SizedBox(height: 30),
+
+                  // ВСТАВЬТЕ ЭТО ЗДЕСЬ (решает проблему unused_element):
+                  _buildTeacherPortfolio(profile), 
+
+                  const SizedBox(height: 120),
                 ],
               ),
             ),
@@ -101,6 +103,63 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
     );
   }
 
+
+ Widget _buildTeacherPortfolio(UserProfileDto profile) {
+  // Показываем портфолио только если пользователь обучает чему-то (есть навыки типа Teaching)
+  final teachingSkills = profile.skills.where((s) => s.type == "Teaching").toList();
+
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        "ПОРТФОЛИО МАТЕРИАЛОВ", 
+        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: AppColors.navy, letterSpacing: 1.5)
+      ),
+      const SizedBox(height: 15),
+      teachingSkills.isEmpty 
+        ? const Text("Портфолио формируется после первых завершенных обменов", 
+            style: TextStyle(color: Colors.grey, fontSize: 12))
+        : SizedBox(
+            height: 130,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: teachingSkills.length,
+              itemBuilder: (ctx, i) => _portfolioCard(teachingSkills[i].skillName),
+            ),
+          ),
+    ],
+  );
+}
+
+Widget _portfolioCard(String title) {
+  return Container(
+    width: 220,
+    margin: const EdgeInsets.only(right: 15, bottom: 5),
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(22),
+      border: Border.all(color: AppColors.primary.withValues(alpha:0.1)),
+      boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.02), blurRadius: 10)],
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.menu_book_rounded, color: AppColors.primary, size: 22),
+        const Spacer(),
+        Text(
+          title, 
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: AppColors.navy), 
+          maxLines: 2, 
+          overflow: TextOverflow.ellipsis
+        ),
+        const SizedBox(height: 4),
+        const Text("Авторский курс обучения", style: TextStyle(color: Colors.grey, fontSize: 10)),
+      ],
+    ),
+  );
+}
+
   // Вспомогательная карточка информации
   Widget _buildInfoTile({required IconData icon, required String title, required String subtitle}) {
     return Container(
@@ -109,7 +168,7 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(25),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10)]
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.02), blurRadius: 10)]
       ),
       child: Row(
         children: [
@@ -140,7 +199,7 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
       decoration: BoxDecoration(
         color: Colors.white, 
         borderRadius: BorderRadius.circular(30),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 20)]
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.03), blurRadius: 20)]
       ),
       child: Column(
         children: [
@@ -184,36 +243,73 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
     );
   }
 
-  Widget _buildSkillBlock(String title, List<UserSkillDto> skills, String type, Color col) {
-    final filtered = skills.where((s) => s.type == type).toList();
-    return Container(
-      padding: const EdgeInsets.all(25),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(25)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: col, letterSpacing: 1.5)),
-          const SizedBox(height: 15),
-          if (filtered.isEmpty) const Text("Не указано", style: TextStyle(color: Colors.grey, fontSize: 13))
-          else Wrap(
-            spacing: 8, runSpacing: 8,
+Widget _buildSkillBlock(String title, List<UserSkillDto> skills, String type, Color col) {
+  final filtered = skills.where((s) => s.type == type).toList();
+  
+  return Container(
+    padding: const EdgeInsets.all(25),
+    decoration: BoxDecoration(
+      color: Colors.white, 
+      borderRadius: BorderRadius.circular(25),
+      boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.02), blurRadius: 10)]
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title, 
+          style: TextStyle(
+            fontWeight: FontWeight.w900, 
+            fontSize: 11, 
+            color: col, 
+            letterSpacing: 1.5
+          )
+        ),
+        const SizedBox(height: 15),
+        if (filtered.isEmpty) 
+          const Text("Не указано", style: TextStyle(color: Colors.grey, fontSize: 13))
+        else 
+          Wrap(
+            spacing: 8, 
+            runSpacing: 8,
             children: filtered.map((s) => Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(color: col.withOpacity(0.05), borderRadius: BorderRadius.circular(10)),
-              child: Text(s.skillName, style: TextStyle(color: col, fontWeight: FontWeight.bold, fontSize: 11)),
+              decoration: BoxDecoration(
+                color: col.withValues(alpha:0.05), 
+                borderRadius: BorderRadius.circular(10),
+                // Если навык верифицирован ИИ, подсвечиваем рамку синим
+                border: Border.all(
+                  color: s.isAiVerified ? Colors.blue.shade200 : Colors.transparent,
+                  width: 1
+                )
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    s.skillName, 
+                    style: TextStyle(color: col, fontWeight: FontWeight.bold, fontSize: 11)
+                  ),
+                  // ГАЛОЧКА ВЕРИФИКАЦИИ (Этап 3)
+                  if (s.isAiVerified) ...[
+                    const SizedBox(width: 4),
+                    const Icon(Icons.verified, color: Colors.blue, size: 14),
+                  ],
+                ],
+              ),
             )).toList(),
           ),
-        ],
-      ),
-    );
-  }
+      ],
+    ),
+  );
+}
 
   Widget _buildActionDock(UserProfileDto p, bool isWide) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 20),
       decoration: BoxDecoration(
         color: Colors.white, 
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))]
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.05), blurRadius: 10, offset: const Offset(0, -5))]
       ),
       child: SafeArea(
         child: p.relationshipStatus == "Accepted"
@@ -226,8 +322,23 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
               onPressed: () async {
                 int? gId = await context.read<GroupProvider>().startDirectChat(p.id);
                 if (gId != null && mounted) {
-                   Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(group: GroupResponse(id: gId, name: p.username, ownerName: p.username, membersCount: 2, isSolo: true, otherUserId: p.id))));
-                }
+// ИСПРАВЛЕННЫЙ БЛОК НАВИГАЦИИ:
+Navigator.push(
+  context,
+  MaterialPageRoute(
+    builder: (_) => ChatScreen(
+      group: GroupResponse(
+        id: gId,
+        name: p.username,
+        ownerName: p.username,
+        ownerId: p.id, // ДОБАВЛЕНО: теперь аргумент присутствует
+        membersCount: 2,
+        isSolo: true,
+        otherUserId: p.id,
+      ),
+    ),
+  ),
+);                }
               },
               icon: const Icon(Icons.chat_bubble_rounded, color: Colors.white),
               label: const Text("ОТКРЫТЬ ОБСУЖДЕНИЕ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),

@@ -1,6 +1,3 @@
-// --- ENUMS ---
-import 'dart:convert';
-
 enum GoalType { Social, Exchange, Group }
 
 enum TaskStatus { ToDo, UnderReview, Done }
@@ -26,32 +23,29 @@ class UserDto {
   final String email;
   final String synergyLevel;
   final String? avatarUrl;
-  // Добавляем эти поля:
-  final List<String> matchTeaching; // Что ОН даст мне
-  final List<String> matchLearning; // Что Я дам ему
+  final List<String> matchTeaching;
+  final List<String> matchLearning;
+  final bool isVerified; 
+  final double rating; // Изменено: теперь это чистый рейтинг
 
   UserDto({
-    required this.id,
-    required this.username,
-    required this.email,
-    required this.synergyLevel,
-    this.avatarUrl,
-    this.matchTeaching = const [],
-    this.matchLearning = const [],
+    required this.id, required this.username, required this.email,
+    required this.synergyLevel, this.avatarUrl,
+    this.matchTeaching = const [], this.matchLearning = const [],
+    this.isVerified = false, this.rating = 0.0,
   });
 
-  factory UserDto.fromJson(Map<String, dynamic> json) {
-    return UserDto(
-      id: json['id'],
-      username: json['username'],
-      email: json['email'],
-      synergyLevel: json['synergyLevel'] ?? "None",
-      avatarUrl: json['avatarUrl'],
-      // Обработка списков из JSON
-      matchTeaching: List<String>.from(json['matchTeaching'] ?? []),
-      matchLearning: List<String>.from(json['matchLearning'] ?? []),
-    );
-  }
+  factory UserDto.fromJson(Map<String, dynamic> json) => UserDto(
+    id: json['id'] ?? 0,
+    username: json['username'] ?? "",
+    email: json['email'] ?? "",
+    synergyLevel: json['synergyLevel'] ?? "None",
+    avatarUrl: json['avatarUrl'],
+    matchTeaching: List<String>.from(json['matchTeaching'] ?? []),
+    matchLearning: List<String>.from(json['matchLearning'] ?? []),
+    isVerified: json['isVerified'] ?? false,
+    rating: (json['rating'] ?? 0.0).toDouble(), // Парсим рейтинг
+  );
 }
 
 class UserProfileDto {
@@ -60,9 +54,8 @@ class UserProfileDto {
   final String email;
   final List<UserSkillDto> skills;
   final List<ReviewDto> reviews;
-  final double rating;
-  final bool isPrivate;
-  final int nectarBalance;
+  final double rating; // Это наш BeePower
+  final double completionRate; // НОВОЕ ПОЛЕ (в процентах)
   final String relationshipStatus;
   final String? avatarUrl;
 
@@ -73,26 +66,22 @@ class UserProfileDto {
     required this.skills,
     required this.reviews,
     required this.rating,
-    required this.isPrivate,
-    required this.nectarBalance,
+    required this.completionRate,
     required this.relationshipStatus,
     this.avatarUrl,
   });
 
   factory UserProfileDto.fromJson(Map<String, dynamic> json) {
-    var sList = (json['skills'] ?? []) as List;
-    var rList = (json['reviews'] ?? []) as List;
     return UserProfileDto(
       id: json['id'] ?? 0,
       username: json['username'] ?? "",
       email: json['email'] ?? "",
       rating: (json['rating'] ?? 0.0).toDouble(),
-      isPrivate: json['isPrivate'] ?? false,
-      nectarBalance: json['nectarBalance'] ?? 0,
+      completionRate: (json['completionRate'] ?? 0.0).toDouble(), // Парсим из бэкенда
       relationshipStatus: json['relationshipStatus'] ?? "None",
       avatarUrl: json['avatarUrl'],
-      skills: sList.map((e) => UserSkillDto.fromJson(e)).toList(),
-      reviews: rList.map((e) => ReviewDto.fromJson(e)).toList(),
+      skills: (json['skills'] as List? ?? []).map((e) => UserSkillDto.fromJson(e)).toList(),
+      reviews: (json['reviews'] as List? ?? []).map((e) => ReviewDto.fromJson(e)).toList(),
     );
   }
 }
@@ -101,16 +90,20 @@ class UserSkillDto {
   final int skillId;
   final String skillName;
   final String type;
+  final bool isAiVerified; // Поле для синей галочки
+
   UserSkillDto({
     required this.skillId,
     required this.skillName,
     required this.type,
+    this.isAiVerified = false,
   });
 
   factory UserSkillDto.fromJson(Map<String, dynamic> json) => UserSkillDto(
     skillId: json['skillId'] ?? 0,
     skillName: json['skillName'] ?? "",
     type: json['type'] ?? "Learning",
+    isAiVerified: json['isAiVerified'] ?? false, // Парсим из обновленного Backend
   );
 }
 
@@ -465,18 +458,22 @@ class GroupResponse {
   final int id;
   final String name;
   final String ownerName;
+  final int ownerId; // ДОБАВИТЬ
   final int membersCount;
   final String? description;
   final bool isSolo;
   final int? otherUserId;
   final String? lastMessage;
-  final DateTime? lastMessageAt; // Добавили
-  final int unreadCount;  
+  final DateTime? lastMessageAt;
+  final int unreadCount;
+  final bool ownerFinished;   // ДОБАВИТЬ
+  final bool partnerFinished; // ДОБАВИТЬ
 
   GroupResponse({
     required this.id,
     required this.name,
     required this.ownerName,
+    required this.ownerId, // ДОБАВИТЬ
     required this.membersCount,
     this.description,
     required this.isSolo,
@@ -484,21 +481,26 @@ class GroupResponse {
     this.lastMessageAt,
     this.unreadCount = 0,
     this.otherUserId,
+    this.ownerFinished = false,   // ДОБАВИТЬ
+    this.partnerFinished = false, // ДОБАВИТЬ
   });
 
   factory GroupResponse.fromJson(Map<String, dynamic> json) => GroupResponse(
     id: json['id'] ?? 0,
     name: json['name'] ?? "",
     ownerName: json['ownerName'] ?? "",
+    ownerId: json['ownerId'] ?? 0, // ПАРСИНГ
     membersCount: json['membersCount'] ?? 0,
     isSolo: json['isSolo'] ?? false,
     lastMessage: json['lastMessage'],
-      lastMessageAt: json['lastMessageAt'] != null 
-          ? DateTime.parse(json['lastMessageAt']).toLocal() 
-          : null,
-      unreadCount: json['unreadCount'] ?? 0,
+    lastMessageAt: json['lastMessageAt'] != null 
+        ? DateTime.parse(json['lastMessageAt']).toLocal() 
+        : null,
+    unreadCount: json['unreadCount'] ?? 0,
     otherUserId: json['otherUserId'],
     description: json['description'],
+    ownerFinished: json['ownerFinished'] ?? false,     // ПАРСИНГ
+    partnerFinished: json['partnerFinished'] ?? false, // ПАРСИНГ
   );
 }
 
@@ -583,9 +585,11 @@ class RoadmapStepDto {
   final String? testData;
   double? testScore;
   final bool isRequired;
-  final int groupId; // Убираем final или оставляем, но даем дефолт
+  final int groupId;
   final int maxAttempts;
   int usedAttempts;
+  // НОВОЕ ПОЛЕ:
+  final bool isArchived; 
 
   RoadmapStepDto({
     required this.id,
@@ -602,28 +606,17 @@ class RoadmapStepDto {
     this.testData,
     this.testScore,
     this.isRequired = true,
-    this.groupId =
-        0, // <--- ИЗМЕНИТЕ ЭТУ СТРОКУ (уберите required и добавьте = 0)
+    this.groupId = 0,
     this.maxAttempts = 3,
     this.usedAttempts = 0,
+    required this.isArchived, // Добавлено
   });
 
   factory RoadmapStepDto.fromJson(Map<String, dynamic> json) {
-    final uA = json['usedAttempts'] ?? json['UsedAttempts'] ?? 0;
-    final status = json['status'] ?? json['Status'] ?? 'ToDo';
-
-    // Если это тест, выведем инфу в консоль
-    if (json['isTest'] == true || json['IsTest'] == true) {
-      print(
-        "DEBUG PARSER: StepId: ${json['id']}, Status: $status, Attempts: $uA",
-      );
-    }
     return RoadmapStepDto(
       id: json['id'],
       content: json['content'] ?? '',
-      dueDate: DateTime.parse(
-        json['dueDate'] ?? json['DueDate'] ?? DateTime.now().toIso8601String(),
-      ),
+      dueDate: DateTime.parse(json['dueDate'] ?? json['DueDate'] ?? DateTime.now().toIso8601String()),
       status: json['status'] ?? 'ToDo',
       creatorId: json['creatorId'],
       creatorName: json['creatorName'],
@@ -635,9 +628,10 @@ class RoadmapStepDto {
       testData: json['testData'],
       testScore: (json['testScore'] ?? json['TestScore'])?.toDouble(),
       isRequired: json['isRequired'] ?? true,
-      groupId: json['groupId'] ?? 0, // <--- И ТУТ ДОБАВЬТЕ ?? 0
+      groupId: json['groupId'] ?? 0,
       maxAttempts: json['maxAttempts'] ?? json['MaxAttempts'] ?? 3,
       usedAttempts: json['usedAttempts'] ?? json['UsedAttempts'] ?? 0,
+      isArchived: json['isArchived'] ?? json['IsArchived'] ?? false, // Парсинг
     );
   }
 }

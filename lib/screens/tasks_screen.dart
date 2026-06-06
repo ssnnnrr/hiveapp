@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_app/widgets/main_dashboard_layout.dart';
 import 'package:intl/intl.dart';
 import 'package:lottie/lottie.dart';
@@ -71,6 +72,8 @@ class TasksScreenState extends State<TasksScreen> {
       events: eventProv.events,
       roadmapSteps: groupProv.allRoadmapSteps,
     );
+
+    setState(() {});
   }
 }
 
@@ -97,63 +100,57 @@ void _syncNotifications() {
 
   // --- ЛОГИКА ДЕЙСТВИЙ ---
 
-  void _handleTaskCheckbox(
-  TaskResponse t,
-  String myName,
-  String? myAvatar,
-  bool isCurrentlyDone,
-) async {
-  // 1. Если на проверке — ничего не делаем
-  if (t.status == "UnderReview") return;
-
-  // 2. Проверяем, требует ли задача прикрепления файла/ссылки
-  bool needsFile = t.artifactUrl != null || t.status == "UnderReview";
-
-  if (needsFile && !isCurrentlyDone) {
-    // Если нужно сдать работу — показываем диалог
+void _handleTaskCheckbox(TaskResponse t, String myName, String? myAvatar, bool isCurrentlyDone) async {
+  
+  // ИСПРАВЛЕНИЕ: Шаги к личным целям (Personal Goals) ВСЕГДА можно отмечать чекбоксом.
+  // Мы блокируем чекбокс только если это ГРУППОВАЯ цель И у задачи стоит флаг необходимости файла.
+  
+  // Если задача требует артефакт (isRequired) - отправляем в диалог сдачи
+  // В TaskResponse мы проверяем флаг isSolo. Если цель личная (isSolo == true), 
+  // то никакой артефакт не нужен, это просто галочка для себя.
+  if (t.isSolo == false && t.artifactUrl != null && !isCurrentlyDone) {
     _showGeneralTaskSubmissionDialog(t);
-  } else {
-    // 3. Обновляем статус задачи в провайдере
-    await context.read<TaskProvider>().updateTaskStatus(
-      taskId: t.id,
-      newStatus: isCurrentlyDone ? "ToDo" : "Done",
-      userName: myName,
-      userAvatar: myAvatar,
-      goalProvider: context.read<GoalProvider>(),
-      comment: null,
-    );
-
-    // 4. МГНОВЕННАЯ СИНХРОНИЗАЦИЯ: удаляем уведомление из списка, 
-    // так как задача теперь помечена как выполненная (Done)
-    if (mounted) {
-      _syncNotifications();
-    }
-  }
-}
-
-  void _handlePartnerTaskAction(RoadmapStepDto task) async {
-  // 1. Если это тест
-  if (task.isTest) {
-    _showTestActionDialog(task);
     return;
   }
 
-  // 2. Если это обязательное задание (требует отчет)
-  if (task.isRequired) {
-    _showArtifactStatusDialog(task);
-    // Примечание: внутри _showArtifactStatusDialog после загрузки файла 
-    // тоже нужно вызвать _refreshData() или _syncNotifications()
-  } else {
-    // 3. Обычное переключение чекбокса (не требует отчета)
-    await context.read<GroupProvider>().toggleStepComplete(task.id, task.groupId);
-    
-    // 4. МГНОВЕННАЯ СИНХРОНИЗАЦИЯ: удаляем уведомление просрочки, 
-    // так как статус сменился на Done
-    if (mounted) {
-      _syncNotifications();
-    }
+  // Для личных целей и обычных задач — просто ставим Done
+  await context.read<TaskProvider>().updateTaskStatus(
+    taskId: t.id,
+    newStatus: isCurrentlyDone ? "ToDo" : "Done",
+    comment: null,
+    userName: myName,
+    userAvatar: myAvatar,
+    goalProvider: context.read<GoalProvider>(),
+  );
+
+  if (!isCurrentlyDone) {
+    context.read<NotificationProvider>().removeOverdueNotification(t.id, "task");
   }
 }
+
+
+ void _handlePartnerTaskAction(RoadmapStepDto task) async {
+    // 1. Если это тест
+    if (task.isTest) {
+      _showTestActionDialog(task);
+      return;
+    }
+
+    // 2. Если это обязательное задание (требует отчет)
+    if (task.isRequired) {
+      _showArtifactStatusDialog(task);
+    } else {
+      // 3. ОБЫЧНОЕ ПЕРЕКЛЮЧЕНИЕ (Исправленный вызов с именованными аргументами)
+      await context.read<GroupProvider>().toggleStepComplete(
+        stepId: task.id, 
+        groupId: task.groupId,
+      );
+      
+      if (mounted) {
+        _syncNotifications();
+      }
+    }
+  }
 
   void _showGeneralTaskSubmissionDialog(TaskResponse t) {
     showDialog(
@@ -247,79 +244,161 @@ void _syncNotifications() {
   }
 
 
-  void _showArtifactStatusDialog(RoadmapStepDto s) {
-    MainDashboardLayout.showHiveDialog(
-      context,
-      StatefulBuilder(
-        builder: (ctx, setSt) {
-          bool isRejected = s.teacherComment != null && s.status == "ToDo";
-          bool hasArtifact = s.artifactUrl != null;
-          bool isUnderReview = s.status == "UnderReview";
-          bool isDone = s.status == "Done";
+void _showArtifactStatusDialog(RoadmapStepDto s) {
+  MainDashboardLayout.showHiveDialog(
+    context,
+    StatefulBuilder(
+      builder: (ctx, setSt) {
+        // Логика состояний
+        bool isRejected = s.teacherComment != null && s.status == "ToDo";
+        bool hasArtifact = s.artifactUrl != null;
+        bool isUnderReview = s.status == "UnderReview";
+        bool isDone = s.status == "Done";
 
-          return Padding(
-            padding: const EdgeInsets.all(32),
+        return Padding(
+          padding: const EdgeInsets.all(32),
+          child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Иконка в зависимости от статуса
                 Icon(
-                  isDone ? Icons.check_circle_rounded : (isRejected ? Icons.edit_notifications_rounded : (isUnderReview ? Icons.hourglass_top_rounded : Icons.cloud_upload_outlined)),
+                  isDone
+                      ? Icons.check_circle_rounded
+                      : (isRejected
+                          ? Icons.edit_notifications_rounded
+                          : (isUnderReview
+                              ? Icons.hourglass_top_rounded
+                              : Icons.cloud_upload_outlined)),
                   size: 54,
-                  color: isDone ? Colors.green : (isRejected ? Colors.orange : (isUnderReview ? Colors.blue : AppColors.primary)),
+                  color: isDone
+                      ? Colors.green
+                      : (isRejected
+                          ? Colors.orange
+                          : (isUnderReview ? Colors.blue : AppColors.primary)),
                 ),
                 const SizedBox(height: 16),
+                
+                // Заголовок
                 Text(
-                  isDone ? "ЗАДАНИЕ ПРИНЯТО" : (isRejected ? "НУЖНЫ ПРАВКИ" : (isUnderReview ? "НА ПРОВЕРКЕ" : "СДАТЬ РАБОТУ")),
-                  style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy),
+                  isDone
+                      ? "ЗАДАНИЕ ПРИНЯТО"
+                      : (isRejected
+                          ? "НУЖНЫ ПРАВКИ"
+                          : (isUnderReview ? "НА ПРОВЕРКЕ" : "СДАТЬ РАБОТУ")),
+                  style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                    color: AppColors.navy,
+                  ),
                 ),
                 const SizedBox(height: 8),
-                Text(s.content, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey, fontSize: 13)),
                 
+                // Текст задания (с переносом)
+                Flexible(
+                  child: Text(
+                    s.content,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.grey, fontSize: 13, height: 1.4),
+                  ),
+                ),
+
+                // Блок правок учителя
                 if (isRejected)
                   Container(
                     margin: const EdgeInsets.only(top: 20),
                     padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(color: Colors.orange.withOpacity(0.08), borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.orange.withOpacity(0.3))),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withValues(alpha:0.08),
+                      borderRadius: BorderRadius.circular(15),
+                      border: Border.all(color: Colors.orange.withValues(alpha:0.3)),
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text("КОММЕНТАРИЙ УЧИТЕЛЯ:", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 10, color: Colors.orange)),
+                        const Text(
+                          "КОММЕНТАРИЙ УЧИТЕЛЯ:",
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 10,
+                            color: Colors.orange,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                         const SizedBox(height: 8),
-                        Text(s.teacherComment!, style: const TextStyle(fontSize: 14, color: AppColors.navy, fontWeight: FontWeight.w600)),
+                        Text(
+                          s.teacherComment!,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: AppColors.navy,
+                            fontWeight: FontWeight.w600,
+                            height: 1.4,
+                          ),
+                        ),
                       ],
                     ),
                   ),
 
                 const SizedBox(height: 25),
 
+                // Отображение сданного ранее ответа
                 if (hasArtifact)
                   InkWell(
-                    onTap: () => _handleResourceOpen(s.artifactUrl), // Метод открытия из предыдущего шага
+                    onTap: () => _handleResourceOpen(s.artifactUrl),
+                    borderRadius: BorderRadius.circular(15),
                     child: Container(
                       padding: const EdgeInsets.all(15),
                       decoration: BoxDecoration(
                         color: const Color(0xFFF1F4F9),
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: isUnderReview ? Colors.blue.withOpacity(0.2) : Colors.transparent),
+                        border: Border.all(
+                          color: isUnderReview
+                              ? Colors.blue.withValues(alpha:0.2)
+                              : Colors.transparent,
+                        ),
                       ),
                       child: Row(
                         children: [
-                          Icon(s.artifactUrl!.startsWith('http') ? Icons.link_rounded : Icons.description_rounded, color: AppColors.primary),
+                          Icon(
+                            s.artifactUrl!.startsWith('http')
+                                ? Icons.link_rounded
+                                : Icons.description_rounded,
+                            color: AppColors.primary,
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text("ВАШ ПОСЛЕДНИЙ ОТВЕТ (НАЖМИТЕ):", style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.grey)),
-                                Text(s.artifactUrl!, maxLines: 1, overflow: TextOverflow.ellipsis, 
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.navy, decoration: TextDecoration.underline)),
+                                const Text(
+                                  "ВАШ ПОСЛЕДНИЙ ОТВЕТ (НАЖМИТЕ):",
+                                  style: TextStyle(
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                                Text(
+                                  s.artifactUrl!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                    color: AppColors.navy,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
+                          // Кнопка удаления для пересдачи
                           if (!isDone)
                             IconButton(
                               onPressed: () => setSt(() => s.artifactUrl = null),
-                              icon: const Icon(Icons.delete_sweep_rounded, color: Colors.redAccent),
+                              icon: const Icon(Icons.delete_sweep_rounded,
+                                  color: Colors.redAccent),
+                              tooltip: "Сбросить и прикрепить заново",
                             ),
                         ],
                       ),
@@ -328,59 +407,104 @@ void _syncNotifications() {
 
                 const SizedBox(height: 30),
 
+                // Кнопки действий
                 if (!hasArtifact && !isDone)
                   Row(
                     children: [
-                      Expanded(child: OutlinedButton(onPressed: () { Navigator.pop(context); _showAddLinkDialog(s.id); }, child: const Text("ССЫЛКА"))),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _showAddLinkDialog(s.id, s.groupId);
+                          },
+                          icon: const Icon(Icons.link, size: 18),
+                          label: const Text("ССЫЛКА",
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ),
                       const SizedBox(width: 12),
-                      Expanded(child: ElevatedButton(onPressed: () async { 
-                        await context.read<GroupProvider>().uploadArtifact(s.id, s.groupId);
-                        Navigator.pop(context);
-                        _refreshData();
-                      }, child: const Text("ФАЙЛ"))),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            // Вызов метода загрузки файла из GroupProvider
+                            await context.read<GroupProvider>().uploadArtifact(
+                                  s.id,
+                                  s.groupId,
+                                );
+                            Navigator.pop(context);
+                            _refreshData();
+                          },
+                          icon: const Icon(Icons.upload_file,
+                              color: Colors.white, size: 18),
+                          label: const Text("ФАЙЛ",
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.navy,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ),
                     ],
                   )
                 else
-                  SizedBox(width: double.infinity, child: TextButton(onPressed: () => Navigator.pop(context), child: const Text("ЗАКРЫТЬ"))),
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("ЗАКРЫТЬ",
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
               ],
             ),
-          );
-        },
-      ),
-    );
-  }
+          ),
+        );
+      },
+    ),
+  );
+}
 
+Future<void> _handleResourceOpen(String? path) async {
+  if (path == null || path.isEmpty) return;
 
-  // Добавьте этот метод в tasks_screen.dart
-  Future<void> _handleResourceOpen(String? path) async {
-    if (path == null || path.isEmpty) return;
-
-    // Если это внешняя ссылка (начинается с http)
+  try {
+    Uri uri;
     if (path.startsWith('http')) {
-      final uri = Uri.parse(path);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Не удалось открыть ссылку")),
-        );
-      }
+      // Если это прямая ссылка (Google Drive, GitHub)
+      uri = Uri.parse(path);
     } else {
-      // Если это локальный файл на сервере (из папки uploads)
+      // Если это файл на нашем сервере ( uploads/filename )
+      // Замените localhost на ваш IP или домен для тестов на реальном устройстве
       final downloadUrl = 'http://localhost:5254/api/Chat/download/${Uri.encodeComponent(path)}';
-      final uri = Uri.parse(downloadUrl);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Не удалось скачать файл")),
-        );
-      }
+      uri = Uri.parse(downloadUrl);
+    }
+
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      throw 'Could not launch $uri';
+    }
+  } catch (e) {
+    debugPrint("Ошибка открытия ресурса: $e");
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Не удалось открыть файл или ссылку"),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
     }
   }
-
-
-
+}
 
   // --- ВЕРСТКА ---
 
@@ -525,12 +649,12 @@ void _syncNotifications() {
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: isOverdue
-                  ? Colors.redAccent.withOpacity(0.4)
+                  ? Colors.redAccent.withValues(alpha:0.4)
                   : const Color(0xFFF1F5F9),
               width: isOverdue ? 2 : 1,
             ),
             boxShadow: [
-              BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10),
+              BoxShadow(color: Colors.black.withValues(alpha:0.02), blurRadius: 10),
             ],
           ),
           child: Column(
@@ -595,17 +719,14 @@ void _syncNotifications() {
   }
 
  Widget _buildEnhancedPartnerCard(RoadmapStepDto s) {
-  // 1. Определяем состояния задания
   bool isDone = s.status == "Done";
   bool isReview = s.status == "UnderReview";
-  // Задание отклонено, если есть комментарий учителя и статус вернулся в ToDo
   bool isRejected = s.teacherComment != null && s.status == "ToDo";
-  
-  // 2. Логика просрочки (Сравниваем только даты без времени)
+  bool isSimpleTask = !s.isTest && !s.isRequired;
+
   final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
   bool isOverdue = s.dueDate.toLocal().isBefore(today) && !isDone && !isReview;
 
-  // Цвет темы задания (фиолетовый для тестов, основной для обычных)
   Color accentColor = s.isTest ? Colors.purple : AppColors.primary;
 
   return Container(
@@ -614,16 +735,15 @@ void _syncNotifications() {
       color: Colors.white,
       borderRadius: BorderRadius.circular(22),
       border: Border.all(
+        // Используем isRejected для рамки
         color: isOverdue 
-            ? Colors.redAccent.withOpacity(0.6) // КРАСНЫЙ при просрочке
-            : (isDone 
-                ? Colors.green.withOpacity(0.2) 
-                : (isRejected ? Colors.orange.withOpacity(0.4) : accentColor.withOpacity(0.1))), 
-        width: isOverdue ? 2.0 : 1.5, // Делаем рамку толще, если пропущено
+            ? Colors.redAccent.withValues(alpha:0.6) 
+            : (isRejected ? Colors.orange.withValues(alpha:0.4) : (isDone ? Colors.green.withValues(alpha:0.2) : accentColor.withValues(alpha:0.1))), 
+        width: isOverdue ? 2.0 : 1.5,
       ),
       boxShadow: [
         BoxShadow(
-          color: isOverdue ? Colors.redAccent.withOpacity(0.05) : accentColor.withOpacity(0.03), 
+          color: isOverdue ? Colors.redAccent.withValues(alpha:0.05) : Colors.black.withValues(alpha:0.02), 
           blurRadius: 10
         )
       ],
@@ -632,12 +752,24 @@ void _syncNotifications() {
       children: [
         ListTile(
           contentPadding: const EdgeInsets.all(15),
-          // Иконка слева
-          leading: isDone 
-            ? const Icon(Icons.check_circle, color: Colors.green, size: 28)
-            : (isReview || isRejected 
-                ? const Icon(Icons.hourglass_bottom, color: Colors.orange, size: 28) 
-                : Icon(Icons.circle_outlined, color: isOverdue ? Colors.redAccent : Colors.grey.shade400, size: 28)),
+          leading: isSimpleTask 
+            ? Checkbox(
+                value: isDone,
+                activeColor: Colors.green,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                onChanged: (val) {
+                  // ИСПРАВЛЕНО: Именованные аргументы (строка 148)
+                  context.read<GroupProvider>().toggleStepComplete(
+                    stepId: s.id, 
+                    groupId: s.groupId
+                  );
+                },
+              )
+            : (isDone 
+                ? const Icon(Icons.check_circle, color: Colors.green, size: 28)
+                : (isReview || isRejected 
+                    ? const Icon(Icons.hourglass_bottom, color: Colors.orange, size: 28) 
+                    : Icon(Icons.circle_outlined, color: isOverdue ? Colors.redAccent : Colors.grey.shade400, size: 28))),
           
           title: Text(
             s.content, 
@@ -647,7 +779,6 @@ void _syncNotifications() {
               color: isDone ? Colors.grey : AppColors.navy
             )
           ),
-          
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 5),
             child: Column(
@@ -658,223 +789,156 @@ void _syncNotifications() {
                   style: TextStyle(fontSize: 10, color: accentColor, fontWeight: FontWeight.bold)
                 ),
                 if (isOverdue)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 4),
-                    child: Text(
-                      "⚠️ СРОК ИСТЕК", 
-                      style: TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 0.5)
-                    ),
-                  ),
+                  const Text("⚠️ СРОК ИСТЕК", style: TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.w900)),
                 if (isRejected) 
-                  const Padding(
-                    padding: EdgeInsets.only(top: 4),
-                    child: Text(
-                      "⚠️ ТРЕБУЮТСЯ ПРАВКИ", 
-                      style: TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.w900)
-                    ),
-                  ),
+                  const Text("⚠️ ТРЕБУЮТСЯ ПРАВКИ", style: TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.w900)),
               ],
             ),
           ),
-          
-          // Кнопка действия или индикатор справа
-          trailing: isRejected 
-            ? ElevatedButton(
-                onPressed: () => _showArtifactStatusDialog(s),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange, 
-                  elevation: 0, 
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
-                ),
-                child: const Text("ПРАВКИ", style: TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)),
-              )
-            : (!isDone 
-                ? _buildTinyActionButton(s) 
-                : const Icon(Icons.verified, color: Colors.green, size: 18)),
-          
-          onTap: () => _handlePartnerTaskAction(s),
+          // Используем метод, который был помечен как unused (строка 704)
+          trailing: isSimpleTask ? null : _buildTinyActionButton(s),
+          onTap: isSimpleTask ? null : () => _handlePartnerTaskAction(s),
         ),
 
-        // Блок с комментарием учителя, если задание отклонено
-        if (isRejected)
+        if (isRejected && s.teacherComment != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(15, 0, 15, 15),
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.08),
+                color: Colors.orange.withValues(alpha:0.08),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.orange.withOpacity(0.2)),
               ),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Icon(Icons.comment_outlined, size: 14, color: Colors.orange),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       s.teacherComment!,
-                      style: const TextStyle(fontSize: 12, color: AppColors.navy, fontWeight: FontWeight.w500),
+                      style: const TextStyle(fontSize: 12, color: AppColors.navy),
                     ),
                   ),
                 ],
               ),
             ),
           ),
-        
-        // Маленькие иконки ресурсов (файлы, инструкции) внизу карточки
         _buildTinyResources(s), 
       ],
     ),
   );
 }
 
-void _showAddLinkDialog(int stepId) {
-    final linkCtrl = TextEditingController();
-    
-    MainDashboardLayout.showHiveDialog(
-      context,
-      Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min, // Окно будет занимать минимум места по вертикали
-          children: [
-            const Icon(Icons.link_rounded, size: 48, color: AppColors.primary),
-            const SizedBox(height: 20),
-            const Text(
-              "ПРИКРЕПИТЬ ССЫЛКУ",
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              "Вставьте URL-адрес вашего ответа. Новый ответ заменит предыдущий и сбросит правки учителя.",
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey, fontSize: 12),
-            ),
-            const SizedBox(height: 25),
-            
-            // Поле ввода с ограничением
-            TextField(
-              controller: linkCtrl,
-              autofocus: true,
-              style: const TextStyle(fontSize: 14),
-              decoration: AppDecorations.smartInput(
-                "https://example.com/your-work", 
-                Icons.insert_link_rounded
-              ).copyWith(
-                helperText: "Обязательно http:// или https://",
-                // Это предотвратит бесконечное расширение поля вширь
-                contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
-              ),
-            ),
-            
-            const SizedBox(height: 30),
-            
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: const Text("ОТМЕНА"),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      String url = linkCtrl.text.trim();
-                      
-                      // Валидация протокола
-                      if (url.isEmpty || (!url.startsWith('http://') && !url.startsWith('https://'))) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("Ошибка: Ссылка должна начинаться с http:// или https://"),
-                            backgroundColor: Colors.redAccent,
-                          )
-                        );
-                        return;
-                      }
-                      
-                      // Логика отправки (находим шаг и groupId)
-                      final groupProv = context.read<GroupProvider>();
-                      // Пытаемся найти шаг в общем списке
-                      final step = groupProv.allRoadmapSteps.firstWhere(
-                        (e) => e.id == stepId,
-                        orElse: () => RoadmapStepDto(id: -1, content: '', dueDate: DateTime.now(), status: '', creatorId: 0),
-                      );
-
-                      int finalGroupId = step.id != -1 ? step.groupId : 0;
-                      // Если мы в чате, используем ID группы из виджета
-                      if (finalGroupId == 0 && widget is ChatScreen) {
-                         finalGroupId = (widget as ChatScreen).group.id;
-                      }
-
-                      await groupProv.submitStepResult(stepId, url, "Ответ обновлен", finalGroupId);
-                      
-                      Navigator.pop(context);
-                      _refreshData();
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.navy,
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: const Text("ОТПРАВИТЬ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTinyActionButton(RoadmapStepDto s) {
-    if (s.isTest) return const Icon(Icons.quiz, color: Colors.purple, size: 20);
-    if (s.isRequired)
-      return const Icon(Icons.upload_file, color: Colors.blue, size: 20);
-    return const SizedBox.shrink();
-  }
-
-Widget _buildTinyResources(RoadmapStepDto s) {
-    if (s.instructionUrl == null && s.artifactUrl == null) return const SizedBox.shrink();
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC), 
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(22)),
-        border: Border(top: BorderSide(color: Colors.grey.shade100))
-      ),
-      child: Row(
+void _showAddLinkDialog(int stepId, int groupId) {
+  final linkCtrl = TextEditingController();
+  MainDashboardLayout.showHiveDialog(
+    context,
+    Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (s.instructionUrl != null) 
-            _tinyBadge(Icons.menu_book, "Материал", Colors.blue),
-          if (s.instructionUrl != null && s.artifactUrl != null) 
-            const SizedBox(width: 15),
-          if (s.artifactUrl != null) 
-            _tinyBadge(Icons.description, "Отчет сдан", Colors.green),
+          const Icon(Icons.link_rounded, size: 48, color: AppColors.primary),
+          const SizedBox(height: 20),
+          const Text("ССЫЛКА НА РАБОТУ", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+          const SizedBox(height: 25),
+          TextField(
+            controller: linkCtrl,
+            decoration: AppDecorations.smartInput("https://...", Icons.insert_link),
+          ),
+          const SizedBox(height: 30),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () async {
+                    if (linkCtrl.text.isEmpty) return;
+                    // ИСПРАВЛЕНО: Именованные аргументы (строка 735)
+                    await context.read<GroupProvider>().submitStepResult(
+                      stepId: stepId,
+                      artifactUrl: linkCtrl.text.trim(),
+                      studentComment: "Сдано с главной",
+                      groupId: groupId,
+                    );
+                    Navigator.pop(context);
+                    _refreshData();
+                  },
+                  child: const Text("ОТПРАВИТЬ"),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
-  Widget _tinyBadge(IconData icon, String label, Color col) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+Widget _buildTinyActionButton(RoadmapStepDto s) {
+  if (s.isTest) return const Icon(Icons.quiz, color: Colors.purple, size: 20);
+  if (s.isRequired) return const Icon(Icons.upload_file, color: Colors.blue, size: 20);
+  return const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey);
+}
+
+Widget _buildTinyResources(RoadmapStepDto s) {
+  if (s.instructionUrl == null && s.artifactUrl == null) return const SizedBox.shrink();
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF8FAFC), 
+      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(22)),
+      border: Border(top: BorderSide(color: Colors.grey.shade100))
+    ),
+    child: Wrap( // Используем Wrap для красивого переноса, если кнопок много
+      spacing: 15,
+      runSpacing: 10,
       children: [
-        Icon(icon, size: 12, color: col),
-        const SizedBox(width: 5),
-        Text(label, style: TextStyle(fontSize: 10, color: col, fontWeight: FontWeight.bold)),
+        if (s.instructionUrl != null) 
+          _tinyBadge(
+            Icons.menu_book, 
+            "Материал", 
+            Colors.blue, 
+            () => _handleResourceOpen(s.instructionUrl) // ВЫЗОВ МЕТОДА ТУТ
+          ),
+        if (s.artifactUrl != null) 
+          _tinyBadge(
+            Icons.description, 
+            "Отчет сдан", 
+            Colors.green, 
+            () => _handleResourceOpen(s.artifactUrl) // ВЫЗОВ МЕТОДА ТУТ
+          ),
       ],
-    );
-  }
+    ),
+  );
+}
+
+Widget _tinyBadge(IconData icon, String label, Color col, VoidCallback onTap) {
+  return InkWell( // Делаем бейдж кликабельным
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(12),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: col.withValues(alpha:0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: col.withValues(alpha:0.2)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: col),
+          const SizedBox(width: 5),
+          Text(
+            label, 
+            style: TextStyle(fontSize: 10, color: col, fontWeight: FontWeight.bold)
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 
   Widget _buildEventCard(EventResponse e) {
     DateTime displayTime = e.eventDate;
@@ -893,7 +957,7 @@ Widget _buildTinyResources(RoadmapStepDto s) {
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: isOverdue
-                    ? Colors.redAccent.withOpacity(0.3)
+                    ? Colors.redAccent.withValues(alpha:0.3)
                     : Colors.transparent,
                 width: 2,
               ),
@@ -907,7 +971,7 @@ Widget _buildTinyResources(RoadmapStepDto s) {
                       height: 80,
                       decoration: BoxDecoration(
                         color: isOverdue
-                            ? Colors.red.withOpacity(0.05)
+                            ? Colors.red.withValues(alpha:0.05)
                             : const Color(0xFFF8FAFC),
                         borderRadius: const BorderRadius.only(
                           topLeft: Radius.circular(18),
@@ -1037,7 +1101,7 @@ Widget _buildTinyResources(RoadmapStepDto s) {
                                   ),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.redAccent
-                                        .withOpacity(0.1),
+                                        .withValues(alpha:0.1),
                                     foregroundColor: Colors.redAccent,
                                     elevation: 0,
                                     padding: const EdgeInsets.symmetric(
@@ -1454,7 +1518,7 @@ Widget _buildTinyResources(RoadmapStepDto s) {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(35),
-        boxShadow: [BoxShadow(color: AppColors.navy.withOpacity(0.06), blurRadius: 30, offset: const Offset(0, 15))],
+        boxShadow: [BoxShadow(color: AppColors.navy.withValues(alpha:0.06), blurRadius: 30, offset: const Offset(0, 15))],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1517,9 +1581,9 @@ Widget _buildTinyResources(RoadmapStepDto s) {
             margin: const EdgeInsets.all(15),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.amber.withOpacity(0.08),
+              color: Colors.amber.withValues(alpha:0.08),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.amber.withOpacity(0.2)),
+              border: Border.all(color: Colors.amber.withValues(alpha:0.2)),
             ),
             child: Row(
               children: [
@@ -1554,7 +1618,7 @@ Widget _buildTinyResources(RoadmapStepDto s) {
             Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
+                color: color.withValues(alpha:0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(icon, size: 14, color: color),
@@ -1574,7 +1638,7 @@ Widget _buildTinyResources(RoadmapStepDto s) {
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
-                color: color.withOpacity(0.8),
+                color: color.withValues(alpha:0.8),
               ),
             ),
           ],
@@ -1585,7 +1649,7 @@ Widget _buildTinyResources(RoadmapStepDto s) {
           child: LinearProgressIndicator(
             value: val,
             minHeight: 7,
-            backgroundColor: color.withOpacity(0.05),
+            backgroundColor: color.withValues(alpha:0.05),
             valueColor: AlwaysStoppedAnimation<Color>(color),
           ),
         ),
@@ -1664,46 +1728,50 @@ Widget _buildTinyResources(RoadmapStepDto s) {
     );
   }
 
-  Widget _buildActionsMenu(int id, String type, dynamic obj) {
-    final myId = context.read<AuthProvider>().user?.id;
+Widget _buildActionsMenu(int id, String type, dynamic obj) {
+  final myId = context.read<AuthProvider>().user?.id;
 
-    if (type == 'task' && obj.creatorId != myId) {
-      return const SizedBox.shrink();
-    }
+  // ПРАВИЛО: Если это шаг цели (task), меню доступно ТОЛЬКО создателю.
+  // Приглашенные партнеры вообще не видят три точки управления.
+  if (type == 'task' && obj.creatorId != myId) {
+    return const SizedBox.shrink();
+  }
 
-    return PopupMenuButton<String>(
-      icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
-      onSelected: (v) {
-        if (v == 'del') {
-          type == 'task'
-              ? context.read<TaskProvider>().deleteTask(
-                  id,
-                  obj.goalId,
-                  context.read<GoalProvider>(),
-                )
-              : _deleteEvent(id);
-        }
-        if (v == 'edit') {
-          if (type == 'task') {
-            _rescheduleGeneral(id, type);
-          } else {
-            _openCreateEvent(event: obj);
-          }
-        }
-        if (v == 'reschedule' && type == 'event') {
+  return PopupMenuButton<String>(
+    icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
+    onSelected: (v) {
+      if (v == 'del') {
+        // Удаление
+        type == 'task'
+            ? context.read<TaskProvider>().deleteTask(id, obj.goalId, context.read<GoalProvider>())
+            : _deleteEvent(id);
+      }
+      if (v == 'reschedule') {
+        // Перенос даты (для задач и событий)
+        if (type == 'task') {
+          _rescheduleGeneral(id, type); // Вызывает showDatePicker
+        } else {
           _rescheduleEvent(obj);
         }
-      },
-      itemBuilder: (ctx) => [
+      }
+      if (v == 'edit' && type == 'event') {
+        // Редактирование текста доступно ТОЛЬКО для личных событий (Events)
+        _openCreateEvent(event: obj);
+      }
+    },
+    itemBuilder: (ctx) => [
+      // Кнопка "Редактировать" (текст) скрыта для шагов цели (Tasks), видна только для Events
+      if (type == 'event')
         const PopupMenuItem(value: 'edit', child: Text("Редактировать")),
-        const PopupMenuItem(value: 'reschedule', child: Text("Перенести")),
-        const PopupMenuItem(
-          value: 'del',
-          child: Text("Удалить", style: TextStyle(color: Colors.red)),
-        ),
-      ],
-    );
-  }
+
+      const PopupMenuItem(value: 'reschedule', child: Text("Перенести")),
+      const PopupMenuItem(
+        value: 'del',
+        child: Text("Удалить", style: TextStyle(color: Colors.red)),
+      ),
+    ],
+  );
+}
 
   void _deleteEvent(int eventId) {
     MainDashboardLayout.showHiveDialog(

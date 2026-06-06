@@ -247,7 +247,7 @@ class _TestTakingScreenState extends State<TestTakingScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: isCorrect ? Colors.green.withOpacity(0.3) : Colors.red.withOpacity(0.3), width: 2),
+          border: Border.all(color: isCorrect ? Colors.green.withValues(alpha:0.3) : Colors.red.withValues(alpha:0.3), width: 2),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -283,7 +283,7 @@ class _TestTakingScreenState extends State<TestTakingScreen> {
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
-          decoration: BoxDecoration(color: color.withOpacity(0.08), borderRadius: BorderRadius.circular(12)),
+          decoration: BoxDecoration(color: color.withValues(alpha:0.08), borderRadius: BorderRadius.circular(12)),
           child: Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 14)),
         ),
       ],
@@ -328,7 +328,7 @@ class _TestTakingScreenState extends State<TestTakingScreen> {
   Widget _buildAttemptBadge() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(color: Colors.amber.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+      decoration: BoxDecoration(color: Colors.amber.withValues(alpha:0.1), borderRadius: BorderRadius.circular(20)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -365,7 +365,7 @@ class _TestTakingScreenState extends State<TestTakingScreen> {
               color: isSelected ? AppColors.navy : Colors.white,
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: isSelected ? AppColors.navy : Colors.grey.shade200, width: 2),
-              boxShadow: [if (isSelected) BoxShadow(color: AppColors.navy.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 5))],
+              boxShadow: [if (isSelected) BoxShadow(color: AppColors.navy.withValues(alpha:0.3), blurRadius: 10, offset: const Offset(0, 5))],
             ),
             child: Row(
               children: [

@@ -163,6 +163,35 @@ Future<void> searchPartners(int? skillId, String type, {String? query}) async {
   }
 
 
+Future<String?> getVerificationTest(int skillId) async {
+  // ИСПРАВЛЕНО: Убрали глобальный _isLoading. 
+  // Теперь этот метод просто возвращает данные, не ломая UI на фоне.
+  try {
+    final response = await _userService.getVerificationTest(skillId);
+    return response; // Возвращаем сырой JSON строку
+  } catch (e) {
+    debugPrint("UserProvider Error: $e");
+    return null;
+  }
+}
+
+Future<bool> submitVerificationResult(int skillId, double score) async {
+  try {
+    final result = await _userService.submitVerification(skillId, score);
+    if (result != null && result['isVerified'] == true) {
+      // Сразу обновляем свой профиль, чтобы синяя галочка появилась мгновенно
+      if (_myProfile != null) {
+        await loadMyProfile(_myProfile!.id);
+      }
+      return true;
+    }
+  } catch (e) {
+    debugPrint("UserProvider Error [submitVerificationResult]: $e");
+  }
+  return false;
+}
+
+
   Future<List<UserDto>> getPartnersOfUser(int userId) async {
     return await _userService.getPartnersOfUser(userId);
   }

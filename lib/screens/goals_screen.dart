@@ -194,7 +194,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
         borderRadius: BorderRadius.circular(24), 
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04), 
+            color: Colors.black.withValues(alpha:0.04), 
             blurRadius: 15, 
             offset: const Offset(0, 8)
           )
@@ -220,7 +220,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: color.withOpacity(0.1), 
+                        color: color.withValues(alpha:0.1), 
                         borderRadius: BorderRadius.circular(12)
                       ),
                       child: Icon(
@@ -231,31 +231,27 @@ class _GoalsScreenState extends State<GoalsScreen> {
                     ),
                     const SizedBox(width: 15),
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            g.title, 
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold, 
-                              fontSize: 17, 
-                              color: AppColors.navy
-                            ), 
-                            maxLines: 1, 
-                            overflow: TextOverflow.ellipsis
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            g.isSolo ? "Личный маршрут" : "Групповой маршрут",
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.grey.shade500,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+  child: Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        g.title,
+        style: const TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 17,
+          color: AppColors.navy,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis, 
+      ),
+      const SizedBox(height: 2),
+      Text(
+        g.isSolo ? "Личный маршрут" : "Групповой маршрут",
+        style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+      ),
+    ],
+  ),
+),
                   ],
                 ),
                 const Spacer(),

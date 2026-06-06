@@ -203,7 +203,7 @@ void _onSave() async {
         borderRadius: BorderRadius.circular(30),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.15), 
+            color: Colors.black.withValues(alpha:0.15), 
             blurRadius: 40, 
             offset: const Offset(0, 20),
           ),
@@ -426,7 +426,7 @@ void _onSave() async {
                       child: Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.6),
+                          color: Colors.black.withValues(alpha:0.6),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(
@@ -494,7 +494,7 @@ void _onSave() async {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
+                color: AppColors.primary.withValues(alpha:0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(icon, size: 18, color: AppColors.primary),

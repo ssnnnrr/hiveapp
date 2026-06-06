@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_app/providers/task_provider.dart';
 import 'package:hive_app/services/api_client.dart';
@@ -24,42 +25,52 @@ class GoalProvider extends ChangeNotifier {
   }
 
 
+// lib/providers/goal_provider.dart
+
 Future<bool> addFileMaterial(int goalId, String title, int? taskId, PlatformFile file) async {
   try {
-    // Создаем MultipartFile в зависимости от платформы
-    late MultipartFile multipartFile;
-    
-    if (file.bytes != null) {
-      // Веб-платформа - используем bytes
+    // Подготавливаем MultipartFile
+    MultipartFile multipartFile;
+
+    if (kIsWeb) {
+      // Для Веб-платформы используем байты
       multipartFile = MultipartFile.fromBytes(
         file.bytes!,
         filename: file.name,
       );
-    } else if (file.path != null) {
-      // Мобильная платформа - используем path
+    } else {
+      // Для Мобильных/Десктопа используем путь к файлу
       multipartFile = await MultipartFile.fromFile(
         file.path!,
         filename: file.name,
       );
-    } else {
-      throw Exception('No file data available');
     }
-    
+
+    // Формируем FormData в строгом соответствии с бэкенд-моделью UploadMaterialRequest
     FormData data = FormData.fromMap({
       "GoalId": goalId,
       "Title": title,
-      "Type": "File",
-      "TaskId": taskId,
+      "TaskId": taskId, // Если null, Dio его пропустит
       "File": multipartFile,
     });
-    
-    final response = await _api.dio.post("/Goals/materials/upload", data: data);
-    
-    if (response.statusCode == 200) {
-      await loadGoals(_goals.first.userId);
+
+    // Делаем запрос
+    final response = await _api.dio.post(
+      "/Goals/materials/upload", 
+      data: data,
+      // ВАЖНО: Не устанавливайте Content-Type вручную, Dio сделает это сам с нужным boundary
+    );
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      // Обновляем список целей, чтобы увидеть новый материал
+      await loadGoals(_goals.first.userId); 
+      notifyListeners();
       return true;
     }
   } catch (e) {
+    if (e is DioException) {
+      debugPrint("Dio Error: ${e.response?.data}");
+    }
     debugPrint("Error uploading file material: $e");
   }
   return false;

@@ -390,7 +390,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: Colors.white.withOpacity(0.1),
+                            color: Colors.white.withValues(alpha:0.1),
                             width: 30,
                           ),
                         ),
@@ -405,7 +405,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: Colors.white.withOpacity(0.05),
+                            color: Colors.white.withValues(alpha:0.05),
                             width: 20,
                           ),
                         ),
@@ -413,61 +413,52 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                     ),
                     Center(
                       child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          TweenAnimationBuilder<double>(
-                            tween: Tween(begin: 0.0, end: 1.0),
-                            duration: const Duration(milliseconds: 1500),
-                            builder: (context, value, child) {
-                              return Transform.scale(scale: value, child: child);
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.all(30),
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.white.withOpacity(0.1),
-                                border: Border.all(
-                                  color: Colors.white.withOpacity(0.2),
-                                  width: 2,
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.hive_rounded,
-                                size: 80,
-                                color: Colors.amber,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 40),
-                          Text(
-                            "HIVE",
-                            style: GoogleFonts.orbitron(
-                              fontSize: 56,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              letterSpacing: 12,
-                            ),
-                          ),
-                          const SizedBox(height: 15),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                            decoration: BoxDecoration(
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.2),
-                              ),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              "ТВОЙ ПУТЬ К ЦЕЛЯМ",
-                              style: GoogleFonts.orbitron(
-                                fontSize: 12,
-                                color: Colors.white70,
-                                letterSpacing: 3,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+  mainAxisAlignment: MainAxisAlignment.center,
+  children: [
+    // 1. ИКОНКА (оставляем как есть, она отличная)
+    Container(
+      padding: const EdgeInsets.all(30),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white.withValues(alpha: 0.1),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.2), width: 2),
+      ),
+      child: const Icon(Icons.hive_rounded, size: 100, color: Colors.amber),
+    ),
+    const SizedBox(height: 40),
+
+    // 2. ТЕКСТ "хайв" (Обновленный стиль)
+    Text(
+      "хайв",
+      style: GoogleFonts.manrope(
+        fontSize: 72,           // Делаем крупно и смело
+        fontWeight: FontWeight.w800,
+        color: Colors.white,
+        letterSpacing: -2.0,    // Плотное современное написание
+        height: 1.0,
+      ),
+    ),
+    const SizedBox(height: 15),
+
+    // 3. ПОДЗАГОЛОВОК (Твой путь к целям)
+    Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        "ТВОЙ ПУТЬ К ЦЕЛЯМ",
+        style: GoogleFonts.manrope( // Единый шрифт для всей кириллицы
+          fontSize: 11,
+          color: Colors.white.withValues(alpha: 0.7),
+          fontWeight: FontWeight.w600,
+          letterSpacing: 2.5,   // Разрядка для контраста с плотным "хайв"
+        ),
+      ),
+    ),
+  ],
+)
                     ),
                   ],
                 ),
@@ -495,7 +486,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                   padding: const EdgeInsets.all(20),
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
-                                    color: AppColors.primary.withOpacity(0.1),
+                                    color: AppColors.primary.withValues(alpha:0.1),
                                   ),
                                   child: const Icon(
                                     Icons.hive_rounded,
@@ -508,25 +499,24 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                             ],
                             
                             Text(
-                              isLogin ? "С возвращением!" : "Присоединяйся!",
-                              style: GoogleFonts.orbitron(
-                                fontSize: 32,
-                                fontWeight: FontWeight.w900,
-                                color: AppColors.navy,
-                                letterSpacing: 2,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              isLogin 
-                                ? "Войди, чтобы продолжить свой путь" 
-                                : "Создай аккаунт и начни достигать цели",
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey.shade500,
-                                height: 1.5,
-                              ),
-                            ),
+      isLogin ? "С возвращением!" : "Присоединяйся!",
+      style: GoogleFonts.manrope( // Тот же шрифт, что и в логотипе
+        fontSize: 32,             // Крупный размер
+        fontWeight: FontWeight.w800, // Очень жирный (ExtraBold)
+        color: const Color(0xFF023E8A), // Ваш темно-синий цвет
+        letterSpacing: -0.5,      // Немного плотнее для стиля
+      ),
+    ),
+    const SizedBox(height: 8),
+    Text(
+      isLogin 
+        ? "Войди, чтобы продолжить свой путь" 
+        : "Создай аккаунт и начни достигать цели",
+      style: GoogleFonts.manrope( // Единый стиль шрифта
+        fontSize: 14,
+        color: Colors.grey.shade500,
+      ),
+    ),
                             const SizedBox(height: 40),
                             
                             // Поля ввода
@@ -765,10 +755,10 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: isMet ? Colors.green.withOpacity(0.1) : Colors.grey.shade100,
+        color: isMet ? Colors.green.withValues(alpha:0.1) : Colors.grey.shade100,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: isMet ? Colors.green.withOpacity(0.3) : Colors.grey.shade300,
+          color: isMet ? Colors.green.withValues(alpha:0.3) : Colors.grey.shade300,
           width: 1,
         ),
       ),
@@ -868,14 +858,14 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
               color: showValidation && errorText != null 
                 ? Colors.red.shade300 
                 : focusNode.hasFocus 
-                  ? AppColors.primary.withOpacity(0.5) 
+                  ? AppColors.primary.withValues(alpha:0.5) 
                   : Colors.grey.shade200,
               width: (showValidation && errorText != null) || focusNode.hasFocus ? 2 : 1,
             ),
             boxShadow: focusNode.hasFocus
               ? [
                   BoxShadow(
-                    color: AppColors.primary.withOpacity(0.1),
+                    color: AppColors.primary.withValues(alpha:0.1),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),

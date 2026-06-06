@@ -79,6 +79,36 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
     );
   }
 
+  // Метод для отображения состояния, когда ничего не найдено
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.person_search_rounded,
+            size: 80,
+            color: Colors.grey.withValues(alpha:0.2),
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            "Партнеры не найдены",
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            "Попробуйте изменить параметры поиска или тип навыка",
+            style: TextStyle(color: Colors.grey, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
   // --- ПАНЕЛЬ ПОИСКА (WEB СТИЛЬ) ---
   Widget _buildSearchHeader(UserProvider prov) {
     return Container(
@@ -194,10 +224,7 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
 
 Widget _buildUserWebCard(UserDto user) {
   bool isMatch = user.synergyLevel == "Ideal";
-  // Считаем, заполнил ли пользователь навыки (проверяем списки из DTO)
-  // Примечание: на детальном экране мы увидим всё, здесь — только то, что важно для поиска
-  bool noSkillsProvided = user.matchTeaching.isEmpty && user.matchLearning.isEmpty && !isMatch;
-
+  
   return Container(
     decoration: BoxDecoration(
       color: Colors.white,
@@ -208,7 +235,7 @@ Widget _buildUserWebCard(UserDto user) {
       ),
       boxShadow: [
         BoxShadow(
-          color: isMatch ? Colors.amber.withOpacity(0.1) : Colors.black.withOpacity(0.04),
+          color: isMatch ? Colors.amber.withValues(alpha:0.1) : Colors.black.withValues(alpha:0.04),
           blurRadius: 20,
           offset: const Offset(0, 10),
         ),
@@ -220,62 +247,51 @@ Widget _buildUserWebCard(UserDto user) {
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => UserDetailScreen(userId: user.id)),
-        ).then((_) => _onSearch()),
+        ),
         borderRadius: BorderRadius.circular(24),
         child: Padding(
           padding: const EdgeInsets.all(25),
           child: Column(
             children: [
-              // --- Аватар ---
-              CircleAvatar(
-                radius: 45,
-                backgroundColor: Colors.grey.shade100,
-                backgroundImage: user.avatarUrl != null
-                    ? MemoryImage(base64Decode(user.avatarUrl!))
-                    : null,
-                child: user.avatarUrl == null
-                    ? const Icon(Icons.person, size: 40, color: Colors.grey)
-                    : null,
-              ),
+              // Метод отрисовки аватара и имени с галочкой
+              _buildAvatarAndName(user), 
+              
               const SizedBox(height: 15),
-              Text(
-                user.username,
-                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+
+              // Блок реального рейтинга на основе отзывов
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _analyticChip(
+                    Icons.star_rounded, 
+                    user.rating > 0 ? user.rating.toStringAsFixed(1) : "0.0", 
+                    Colors.amber
+                  ),
+                ],
               ),
               
               const Spacer(),
-
-              // --- СРЕДНЯЯ СЕКЦИЯ: Идеальный мэтч или Статус заполнения ---
-              if (isMatch)
-                _buildMatchContent(user)
-              else if (noSkillsProvided)
-                _buildNewcomerBadge() // Красивый статус для тех, кто не заполнил навыки
-              else
-                Text(
-                  "Готов к общению",
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 13, fontWeight: FontWeight.w500),
-                ),
-
+              if (isMatch) 
+                _buildStatusBadge(
+                  title: "ИДЕАЛЬНЫЙ МЭТЧ",
+                  color: Colors.orange,
+                  bgColor: Colors.amber.shade50,
+                ) 
+              else 
+                const Text("", style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.w500)),
               const Spacer(),
 
-              // --- Кнопка ---
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: isMatch ? Colors.amber : AppColors.primary,
                   minimumSize: const Size(double.infinity, 50),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                  elevation: 0,
                 ),
                 onPressed: () => Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => UserDetailScreen(userId: user.id)),
                 ),
-                child: const Text(
-                  "ПОСМОТРЕТЬ ПРОФИЛЬ",
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
-                ),
+                child: const Text("ПРОФИЛЬ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
               ),
             ],
           ),
@@ -285,75 +301,83 @@ Widget _buildUserWebCard(UserDto user) {
   );
 }
 
-// Виджет для пользователей без навыков
-Widget _buildNewcomerBadge() {
-  return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-    decoration: BoxDecoration(
-      color: Colors.blueGrey.withOpacity(0.05),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.edit_note_rounded, size: 16, color: Colors.blueGrey.shade300),
-        const SizedBox(width: 8),
-        Text(
-          "Навыки не указаны",
-          style: TextStyle(color: Colors.blueGrey.shade400, fontSize: 12, fontWeight: FontWeight.bold),
-        ),
-      ],
-    ),
-  );
-}
-
-// Виджет контента для идеального мэтча
-Widget _buildMatchContent(UserDto user) {
+Widget _buildAvatarAndName(UserDto user) {
   return Column(
     children: [
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(color: Colors.amber.shade50, borderRadius: BorderRadius.circular(10)),
-        child: const Text(
-          "ИДЕАЛЬНЫЙ МЭТЧ",
-          style: TextStyle(color: Colors.orange, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 0.5),
-        ),
+      CircleAvatar(
+        radius: 45,
+        backgroundColor: Colors.grey.shade100,
+        backgroundImage: user.avatarUrl != null
+            ? MemoryImage(base64Decode(user.avatarUrl!))
+            : null,
+        child: user.avatarUrl == null
+            ? const Icon(Icons.person, size: 40, color: Colors.grey)
+            : null,
       ),
-      const SizedBox(height: 10),
-      Text(
-        "Взаимный интерес в ${user.matchTeaching.length + user.matchLearning.length} темах",
-        textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 11, color: AppColors.navy, fontWeight: FontWeight.w600),
+      const SizedBox(height: 15),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Flexible(
+            child: Text(
+              user.username,
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // СИНЯЯ ГАЛОЧКА, если пройдена верификация навыка Teaching
+          if (user.isVerified) 
+            const Padding(
+              padding: EdgeInsets.only(left: 6),
+              child: Icon(Icons.verified, color: Colors.blue, size: 20),
+            ),
+        ],
       ),
     ],
   );
 }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.person_search_rounded,
-            size: 80,
-            color: Colors.grey.withValues(alpha: 0.2),
+Widget _analyticChip(IconData icon, String label, Color col) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+      color: col.withValues(alpha:0.1),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(
+      children: [
+        Icon(icon, size: 14, color: col),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: col)),
+      ],
+    ),
+  );
+}
+
+
+
+Widget _buildStatusBadge({required String title, required Color color, required Color bgColor}) {
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: bgColor, 
+          borderRadius: BorderRadius.circular(12)
+        ),
+        child: Text(
+          title,
+          style: TextStyle(
+            color: color, 
+            fontSize: 10, 
+            fontWeight: FontWeight.w900, 
+            letterSpacing: 0.5
           ),
-          const SizedBox(height: 20),
-          const Text(
-            "Партнеры не найдены",
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const Text(
-            "Попробуйте изменить параметры поиска или тип навыка",
-            style: TextStyle(color: Colors.grey, fontSize: 13),
-          ),
-        ],
+        ),
       ),
-    );
-  }
+    ],
+  );
+}
 }

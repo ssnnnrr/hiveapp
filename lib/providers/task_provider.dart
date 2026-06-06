@@ -1,4 +1,3 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../models/all_models.dart';
 import '../services/task_service.dart';
@@ -137,7 +136,7 @@ class TaskProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> updateTaskStatus({
+Future<void> updateTaskStatus({
     required int taskId,
     required String newStatus,
     required String? comment,
@@ -147,8 +146,10 @@ class TaskProvider extends ChangeNotifier {
   }) async {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index == -1) return;
+    
     final oldTask = _tasks[index];
     
+    // 1. Локальное обновление списка выполнивших (Completions)
     List<UserMinimalDto> updatedCompletions = List<UserMinimalDto>.from(oldTask.completions);
     if (newStatus == "Done") {
       if (!updatedCompletions.any((c) => c.username == userName)) {
@@ -158,16 +159,29 @@ class TaskProvider extends ChangeNotifier {
       updatedCompletions.removeWhere((c) => c.username == userName);
     }
 
+    // 2. Обновляем задачу в локальном кэше
     _tasks[index] = oldTask.copyWith(status: newStatus, completions: updatedCompletions);
     
+    // 3. ПЕРЕСЧЕТ ПЕРСОНАЛЬНОГО ПРОГРЕССА
+    // Вызываем getProgress именно для этой цели и этого пользователя
+    double myNewProgress = getProgress(userName, goalId: oldTask.goalId);
+
+    // 4. Синхронизируем с GoalProvider (чтобы % на карточках изменились сразу)
     Future.microtask(() {
-      goalProvider.syncProgress(oldTask.goalId, getProgress(userName));
+      goalProvider.syncProgress(oldTask.goalId, myNewProgress);
       goalProvider.syncTaskInGoal(oldTask.goalId, _tasks[index]);
     });
     
     _safeNotify();
-    await _taskService.updateTaskStatus(taskId, newStatus, comment);
-  }
+
+    // 5. Отправляем запрос на сервер
+    try {
+      await _taskService.updateTaskStatus(taskId, newStatus, comment);
+    } catch (e) {
+      debugPrint("Error updating task status on server: $e");
+      // В случае ошибки желательно откатить или перезагрузить данные
+    }
+}
 
 double getProgress(String myUsername, {int? goalId}) {
   // Фильтруем задачи: если goalId передан, берем только задачи этой цели
