@@ -67,11 +67,8 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
                   _buildMainHeader(profile),
                   const SizedBox(height: 25),
                   
-                  _buildInfoTile(
-                    icon: Icons.verified_user_rounded,
-                    title: "Статус аккаунта",
-                    subtitle: "Пользователь подтвержден и готов к обмену навыками",
-                  ),
+                   _buildUserRatingTile(profile), 
+    
                   const SizedBox(height: 25),
                   
                   if (_isIdealMatch(myProfile, profile)) _buildMatchBanner(),
@@ -87,11 +84,6 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
                     ],
                   ),
 
-                  const SizedBox(height: 30),
-
-                  // ВСТАВЬТЕ ЭТО ЗДЕСЬ (решает проблему unused_element):
-                  _buildTeacherPortfolio(profile), 
-
                   const SizedBox(height: 120),
                 ],
               ),
@@ -104,94 +96,66 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
   }
 
 
- Widget _buildTeacherPortfolio(UserProfileDto profile) {
-  // Показываем портфолио только если пользователь обучает чему-то (есть навыки типа Teaching)
-  final teachingSkills = profile.skills.where((s) => s.type == "Teaching").toList();
-
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const Text(
-        "ПОРТФОЛИО МАТЕРИАЛОВ", 
-        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, color: AppColors.navy, letterSpacing: 1.5)
-      ),
-      const SizedBox(height: 15),
-      teachingSkills.isEmpty 
-        ? const Text("Портфолио формируется после первых завершенных обменов", 
-            style: TextStyle(color: Colors.grey, fontSize: 12))
-        : SizedBox(
-            height: 130,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: teachingSkills.length,
-              itemBuilder: (ctx, i) => _portfolioCard(teachingSkills[i].skillName),
-            ),
-          ),
-    ],
-  );
-}
-
-Widget _portfolioCard(String title) {
-  return Container(
-    width: 220,
-    margin: const EdgeInsets.only(right: 15, bottom: 5),
-    padding: const EdgeInsets.all(18),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(22),
-      border: Border.all(color: AppColors.primary.withValues(alpha:0.1)),
-      boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.02), blurRadius: 10)],
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Icon(Icons.menu_book_rounded, color: AppColors.primary, size: 22),
-        const Spacer(),
-        Text(
-          title, 
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: AppColors.navy), 
-          maxLines: 2, 
-          overflow: TextOverflow.ellipsis
+ Widget _buildUserRatingTile(UserProfileDto profile) {
+  return Material(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(25),
+    child: InkWell(
+      onTap: () => _showAllReviews(profile.reviews), // Просмотр отзывов
+      borderRadius: BorderRadius.circular(25),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(25),
+          border: Border.all(color: Colors.amber.withValues(alpha: 0.1), width: 2),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 10)]
         ),
-        const SizedBox(height: 4),
-        const Text("Авторский курс обучения", style: TextStyle(color: Colors.grey, fontSize: 10)),
-      ],
+        child: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: Colors.amber.withValues(alpha: 0.1),
+              child: const Icon(Icons.star_rounded, color: Colors.amber, size: 24),
+            ),
+            const SizedBox(width: 15),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Рейтинг пользователя", 
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)
+                  ),
+                  Text(
+                    "На основе ${profile.reviews.length} отзывов", 
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600)
+                  ),
+                ],
+              ),
+            ),
+            // Вывод самого рейтинга
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.navy.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                profile.rating.toStringAsFixed(1),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900, 
+                  fontSize: 18, 
+                  color: AppColors.navy
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     ),
   );
 }
 
-  // Вспомогательная карточка информации
-  Widget _buildInfoTile({required IconData icon, required String title, required String subtitle}) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(25),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.02), blurRadius: 10)]
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            backgroundColor: const Color(0xFFF1F5F9),
-            child: Icon(icon, color: AppColors.primary, size: 20),
-          ),
-          const SizedBox(width: 15),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                Text(subtitle, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Широкий метод хедера (Возвращен по просьбе)
   Widget _buildMainHeader(UserProfileDto p) {
     return Container(
       width: double.infinity,
@@ -224,6 +188,82 @@ Widget _portfolioCard(String title) {
       ),
     );
   }
+
+  void _showAllReviews(List<ReviewDto> reviews) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+    ),
+    builder: (ctx) => Column(
+      children: [
+        const SizedBox(height: 15),
+        Container(
+          width: 40, 
+          height: 4, 
+          decoration: BoxDecoration(
+            color: Colors.grey[300], 
+            borderRadius: BorderRadius.circular(10)
+          )
+        ),
+        const Padding(
+          padding: EdgeInsets.all(20),
+          child: Text("ОТЗЫВЫ ПАРТНЕРОВ", 
+            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: AppColors.navy)),
+        ),
+        Expanded(
+          child: reviews.isEmpty 
+            ? const Center(child: Text("Об этом пользователе пока нет отзывов"))
+            : ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: reviews.length,
+                itemBuilder: (ctx, i) => Container(
+                  margin: const EdgeInsets.only(bottom: 15),
+                  padding: const EdgeInsets.all(15),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.grey.shade100)
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const CircleAvatar(
+                            radius: 15, 
+                            backgroundColor: AppColors.accent,
+                            child: Icon(Icons.person, size: 15, color: AppColors.navy)
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            reviews[i].reviewerName, 
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)
+                          ),
+                          const Spacer(),
+                          Text(
+                            reviews[i].rating.toString(),
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const Icon(Icons.star_rounded, color: Colors.amber, size: 18),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        reviews[i].comment, 
+                        style: const TextStyle(fontSize: 13, height: 1.4, color: Colors.black87)
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+        ),
+        const SizedBox(height: 20),
+      ],
+    ),
+  );
+}
 
   Widget _buildMatchBanner() {
     return Container(

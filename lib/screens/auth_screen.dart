@@ -96,24 +96,28 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 
-  // Валидация email (только для регистрации)
-  void _validateEmail() {
-    if (isLogin) return;
-    
-    final email = _emailCtrl.text.trim();
-    if (email.isEmpty) {
-      setState(() => _emailError = 'Логин обязателен');
-      return;
-    }
-    
-    final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
-    if (!emailRegex.hasMatch(email)) {
-      setState(() => _emailError = 'Введите корректный логин');
-      return;
-    }
-    
-    setState(() => _emailError = null);
+void _validateEmail() {
+  if (isLogin) return;
+  
+  final email = _emailCtrl.text.trim();
+  if (email.isEmpty) {
+    setState(() => _emailError = 'Логин обязателен');
+    return;
   }
+  
+  if (email.length > 3 && !email.contains('@')) {
+     setState(() => _emailError = 'Введите корректный email');
+     return;
+  }
+
+  final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+  if (email.contains('@') && !emailRegex.hasMatch(email)) {
+    setState(() => _emailError = 'Неверный формат email');
+    return;
+  }
+  
+  setState(() => _emailError = null);
+}
 
   // Валидация username (только для регистрации)
   void _validateUsername() {
@@ -534,15 +538,16 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                             ],
                             
                             _buildInputField(
-                              controller: _emailCtrl,
-                              focusNode: _emailFocus,
-                              label: "ЛОГИН",
-                              hint: "mail@example.com",
-                              icon: Icons.email_outlined,
-                              keyboardType: TextInputType.emailAddress,
-                              errorText: !isLogin ? _emailError : null,
-                              showValidation: !isLogin,
-                            ),
+  key: const ValueKey('email_field'), // ДОБАВЛЕНО
+  controller: _emailCtrl,
+  focusNode: _emailFocus,
+  label: "ЛОГИН",
+  hint: "mail@example.com",
+  icon: Icons.email_outlined,
+  keyboardType: TextInputType.emailAddress,
+  errorText: !isLogin ? _emailError : null,
+  showValidation: !isLogin,
+),
                             const SizedBox(height: 20),
                             
                             _buildInputField(
@@ -794,6 +799,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildInputField({
+    Key? key,
     required TextEditingController controller,
     required FocusNode focusNode,
     required String label,
@@ -807,6 +813,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     bool showValidation = false,
   }) {
     return Column(
+      key: key,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(

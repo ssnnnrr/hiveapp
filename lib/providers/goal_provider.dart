@@ -17,88 +17,73 @@ class GoalProvider extends ChangeNotifier {
   List<GoalResponse> get goals => _goals;
   bool get isLoading => _isLoading;
 
-  /// Очистка всех данных
   void clearData() {
     _goals = [];
     _isLoading = false;
     notifyListeners();
   }
 
+  Future<bool> addFileMaterial(int goalId, String title, int? taskId, PlatformFile file) async {
+    try {
+      MultipartFile multipartFile;
 
-// lib/providers/goal_provider.dart
+      if (kIsWeb) {
+        multipartFile = MultipartFile.fromBytes(
+          file.bytes!,
+          filename: file.name,
+        );
+      } else {
+        multipartFile = await MultipartFile.fromFile(
+          file.path!,
+          filename: file.name,
+        );
+      }
+      FormData data = FormData.fromMap({
+        "GoalId": goalId,
+        "Title": title,
+        "TaskId": taskId, 
+        "File": multipartFile,
+      });
 
-Future<bool> addFileMaterial(int goalId, String title, int? taskId, PlatformFile file) async {
-  try {
-    // Подготавливаем MultipartFile
-    MultipartFile multipartFile;
-
-    if (kIsWeb) {
-      // Для Веб-платформы используем байты
-      multipartFile = MultipartFile.fromBytes(
-        file.bytes!,
-        filename: file.name,
+      final response = await _api.dio.post(
+        "/Goals/materials/upload", 
+        data: data,
       );
-    } else {
-      // Для Мобильных/Десктопа используем путь к файлу
-      multipartFile = await MultipartFile.fromFile(
-        file.path!,
-        filename: file.name,
-      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        await loadGoals(_goals.first.userId); 
+        notifyListeners();
+        return true;
+      }
+    } catch (e) {
+      if (e is DioException) {
+        debugPrint("Dio Error: ${e.response?.data}");
+      }
+      debugPrint("Error uploading file material: $e");
     }
+    return false;
+  }
 
-    // Формируем FormData в строгом соответствии с бэкенд-моделью UploadMaterialRequest
-    FormData data = FormData.fromMap({
-      "GoalId": goalId,
-      "Title": title,
-      "TaskId": taskId, // Если null, Dio его пропустит
-      "File": multipartFile,
-    });
-
-    // Делаем запрос
-    final response = await _api.dio.post(
-      "/Goals/materials/upload", 
-      data: data,
-      // ВАЖНО: Не устанавливайте Content-Type вручную, Dio сделает это сам с нужным boundary
+  Future<bool> addMaterialWithTask(int goalId, String title, String content, String type, int? taskId, {PlatformFile? file}) async {
+    if (type == "File" && file != null) {
+      return await addFileMaterial(goalId, title, taskId, file);
+    }
+    
+    bool success = await _goalService.addMaterial(
+      goalId: goalId,
+      title: title,
+      content: content,
+      type: type,
+      taskId: taskId,
     );
 
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      // Обновляем список целей, чтобы увидеть новый материал
-      await loadGoals(_goals.first.userId); 
-      notifyListeners();
-      return true;
+    if (success) {
+      final goal = _goals.firstWhere((g) => g.id == goalId);
+      await loadGoals(goal.userId);
     }
-  } catch (e) {
-    if (e is DioException) {
-      debugPrint("Dio Error: ${e.response?.data}");
-    }
-    debugPrint("Error uploading file material: $e");
+    return success;
   }
-  return false;
-}
 
-// Обновленный метод для поддержки и файлов и ссылок
-Future<bool> addMaterialWithTask(int goalId, String title, String content, String type, int? taskId, {PlatformFile? file}) async {
-  if (type == "File" && file != null) {
-    return await addFileMaterial(goalId, title, taskId, file);
-  }
-  
-  // Для ссылок используем существующий метод
-  bool success = await _goalService.addMaterial(
-    goalId: goalId,
-    title: title,
-    content: content,
-    type: type,
-    taskId: taskId,
-  );
-
-  if (success) {
-    final goal = _goals.firstWhere((g) => g.id == goalId);
-    await loadGoals(goal.userId);
-  }
-  return success;
-}
-
-  /// Загрузка списка целей (Синхронизировано с Service)
   Future<void> loadGoals(int userId) async {
     _isLoading = true;
     Future.microtask(() => notifyListeners());
@@ -113,7 +98,6 @@ Future<bool> addMaterialWithTask(int goalId, String title, String content, Strin
     }
   }
 
-  /// Создание маршрута
   Future<bool> addGoalWithSteps({
     required String title,
     required String why,

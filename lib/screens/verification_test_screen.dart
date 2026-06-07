@@ -209,8 +209,29 @@ void _finishTest() async {
 
   @override
   Widget build(BuildContext context) {
-    final q = widget.questions[_currentIndex];
-    bool isLast = _currentIndex == widget.questions.length - 1;
+    if (widget.questions.isEmpty) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Ошибка теста")),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 60, color: Colors.red),
+            const SizedBox(height: 16),
+            const Text("Тест не содержит вопросов.", style: TextStyle(fontSize: 18)),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("ВЕРНУТЬСЯ"),
+            )
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Теперь эта строка безопасна:
+  final q = widget.questions[_currentIndex];
+  bool isLast = _currentIndex == widget.questions.length - 1;
 
     return Scaffold(
       backgroundColor: Colors.white, // ИЗМЕНЕНО: СВЕТЛЫЙ ТОН

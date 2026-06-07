@@ -182,7 +182,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 }
 
 
-// 1. Находим и ЗАМЕНЯЕМ старый метод _buildAnalyticsSection на этот:
 Widget _buildAnalyticsSection(UserProfileDto profile) {
   return InkWell(
     onTap: () => _showAllReviews(profile.reviews),
@@ -307,7 +306,7 @@ void _showAllReviews(List<ReviewDto> reviews) {
 
 
 void _startVerification(UserSkillDto s) async {
-  // 1. Показываем ОДНО единственное модальное окно загрузки
+  // 1. Показываем модальное окно загрузки
   showDialog(
     context: context,
     barrierDismissible: false,
@@ -328,7 +327,7 @@ void _startVerification(UserSkillDto s) async {
               style: GoogleFonts.manrope(
                 fontWeight: FontWeight.bold,
                 color: AppColors.navy,
-                decoration: TextDecoration.none, // Убираем желтую черту под текстом
+                decoration: TextDecoration.none,
                 fontSize: 16,
               ),
             ),
@@ -340,41 +339,57 @@ void _startVerification(UserSkillDto s) async {
 
   final prov = context.read<UserProvider>();
   
-  // 2. Запрашиваем данные (провайдер теперь не меняет глобальный флаг загрузки)
+  // 2. Запрашиваем данные у сервера
   final testDataRaw = await prov.getVerificationTest(s.skillId);
 
   if (!mounted) return;
   
-  // 3. Закрываем модалку загрузки
+  // 3. Закрываем окно загрузки (обязательно перед навигацией или показом ошибки)
   Navigator.of(context, rootNavigator: true).pop();
 
+  // 4. Проверяем, что сервер прислал данные
   if (testDataRaw != null && testDataRaw.isNotEmpty) {
     try {
+      // Декодируем строку JSON в список
       final List<dynamic> questions = jsonDecode(testDataRaw);
       
-      // 4. Переходим к тесту
-      Navigator.push(context, MaterialPageRoute(
-        builder: (_) => VerificationTestScreen(
-          skillId: s.skillId, 
-          skillName: s.skillName, 
-          questions: questions,
-        )
-      ));
+      // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем, не пустой ли список
+      if (questions.isEmpty) {
+        _showErrorSnackBar("ИИ вернул пустой список вопросов. Попробуйте еще раз.");
+        return;
+      }
+      
+      // 5. Если всё хорошо, переходим на экран теста
+      Navigator.push(
+        context, 
+        MaterialPageRoute(
+          builder: (_) => VerificationTestScreen(
+            skillId: s.skillId, 
+            skillName: s.skillName, 
+            questions: questions,
+          ),
+        ),
+      );
     } catch (e) {
-      _showErrorSnackBar("Ошибка в структуре теста. Попробуйте еще раз.");
+      // Если JSON пришел «битый» или произошла ошибка парсинга
+      debugPrint("Parsing Error: $e");
+      _showErrorSnackBar("Ошибка в структуре теста. Попробуйте снова через минуту.");
     }
   } else {
-    _showErrorSnackBar("Не удалось связаться с ИИ. Проверьте соединение.");
+    // Если сервер вообще ничего не прислал
+    _showErrorSnackBar("Не удалось связаться с ИИ. Проверьте интернет-соединение.");
   }
 }
 
-// Хелпер для вывода ошибок
+// Вспомогательный метод для показа ошибок (если у вас его нет, добавьте ниже)
 void _showErrorSnackBar(String message) {
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
       content: Text(message),
       backgroundColor: Colors.redAccent,
       behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      margin: const EdgeInsets.all(20),
     ),
   );
 }

@@ -123,8 +123,29 @@ class _TestTakingScreenState extends State<TestTakingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  if (_isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
+  // ПРОВЕРКА: Если список вопросов пуст, не даем приложению упасть
+  if (_questions.isEmpty) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Ошибка")),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Colors.red),
+            const SizedBox(height: 16),
+            const Text("Данные теста еще не загружены или пусты."),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Вернуться"),
+            )
+          ],
+        ),
+      ),
+    );
+  }
     // ПОЛУЧАЕМ ID ПРЯМО ТУТ - это безопасно и быстро
     final myId = context.read<AuthProvider>().user?.id ?? 0;
     
@@ -226,8 +247,8 @@ class _TestTakingScreenState extends State<TestTakingScreen> {
 
   Widget _buildReviewCard(int idx, dynamic q, Map<String, dynamic> studentAnswers) {
     // Извлекаем ответ ученика из JSON-мапы
-    var studentAns = studentAnswers.values.length > idx ? studentAnswers.values.elementAt(idx) : "Нет ответа";
-    var correctAns = q['correctAnswer'];
+    var studentAns = studentAnswers["Вопрос ${idx + 1}"] ?? "Нет ответа";
+  var correctAns = q['correctAnswer'];
 
     // Логика проверки правильности для визуализации
     bool isCorrect = false;

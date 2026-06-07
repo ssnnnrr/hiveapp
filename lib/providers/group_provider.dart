@@ -67,75 +67,63 @@ class GroupProvider extends ChangeNotifier {
 
   // --- ЧАТ И SIGNALR ---
 
+// Внутри GroupProvider.dart
+
 Future<void> openChat(int groupId, int myId, BuildContext context, {VoidCallback? onBothFinished}) async {
     _activeGroupId = groupId;
     _isLoading = true;
-    _messages = []; 
-    _roadmapSteps = [];
+    // Не очищаем сообщения сразу, чтобы UI не дергался, 
+    // но помечаем, что мы в новой группе
     notifyListeners();
 
     try {
-      // 1. Предварительная загрузка данных
-      // Выполняем параллельно для скорости
-      await Future.wait([
-        _api.dio.post("/Chat/$groupId/read-all"),
-        loadMessages(groupId),
-        loadRoadmap(groupId),
-        loadGroups(),
-      ]);
+      // Первичная загрузка
+      await _initialLoad(groupId);
 
-      // 2. Инициализация SignalR
       await _chatService.initSignalR(
         groupId,
         (newMessage) { // OnMessageReceived
-          debugPrint("--- SIGNALR: Получено сообщение: ${newMessage.content}");
           if (!_messages.any((m) => m.id == newMessage.id)) {
-            // ВАЖНО: Вставляем в индекс 0 для ListView(reverse: true)
             _messages.insert(0, newMessage); 
             notifyListeners();
           }
         },
         () async { // OnRoadmapUpdated
-          debugPrint("--- SIGNALR: Сигнал обновления Roadmap ---");
+          debugPrint("--- SIGNALR: Сигнал обновления (Roadmap/Groups/Messages) ---");
           
-          // Проверяем состояние ДО обновления
-          bool wasFinished = false;
+          // Проверяем статус до обновления
+          bool wasBothFinished = false;
           try {
-             final g = _groups.firstWhere((g) => g.id == groupId);
-             wasFinished = g.ownerFinished && g.partnerFinished;
+            var g = _groups.firstWhere((g) => g.id == groupId);
+            wasBothFinished = g.ownerFinished && g.partnerFinished;
           } catch (_) {}
 
-          // Загружаем свежие данные параллельно
+          // Загружаем всё заново, используя try-catch для каждого, 
+          // чтобы ошибка Dio на Web не блокировала всё обновление
           await Future.wait([
-            loadGroups(),
-            loadRoadmap(groupId),
+            loadGroups().catchError((e) => debugPrint("LoadGroups error: $e")),
+            loadRoadmap(groupId).catchError((e) => debugPrint("LoadRoadmap error: $e")),
+            loadMessages(groupId).catchError((e) => debugPrint("LoadMessages error: $e")),
           ]);
 
-          // Проверяем состояние ПОСЛЕ обновления
+          // Проверяем статус после обновления
           try {
-            final updatedGroup = _groups.firstWhere((g) => g.id == groupId);
-            bool isNowFinished = updatedGroup.ownerFinished && updatedGroup.partnerFinished;
-
-            // Если обучение закрылось только что — вызываем окно рейтинга
-            if (!wasFinished && isNowFinished && onBothFinished != null) {
+            var g = _groups.firstWhere((g) => g.id == groupId);
+            bool isNowBothFinished = g.ownerFinished && g.partnerFinished;
+            
+            if (!wasBothFinished && isNowBothFinished && onBothFinished != null) {
               onBothFinished();
             }
-          } catch (e) {
-            debugPrint("Error finding group after update: $e");
-          }
+          } catch (_) {}
           
           notifyListeners(); 
         },
-
-        (noteId) {
-          debugPrint("SignalR: Получен сигнал на удаление уведомления $noteId");
-          // Вызываем метод в NotificationProvider для мгновенного удаления из списка
-          context.read<NotificationProvider>().handleSignalRNotificationDeleted(noteId);
-        },
-
         (deletedId) { // OnMessageDeleted
           _messages.removeWhere((m) => m.id == deletedId);
           notifyListeners();
+        },
+        (noteId) {
+          context.read<NotificationProvider>().handleSignalRNotificationDeleted(noteId);
         },
         (status) => debugPrint("SignalR Status: $status"),
       );
@@ -145,7 +133,19 @@ Future<void> openChat(int groupId, int myId, BuildContext context, {VoidCallback
       _isLoading = false;
       notifyListeners();
     }
+}
+
+// Вынесем первичную загрузку в отдельный метод для чистоты
+Future<void> _initialLoad(int groupId) async {
+  try {
+    await _api.dio.post("/Chat/$groupId/read-all");
+    await loadGroups();
+    await loadMessages(groupId);
+    await loadRoadmap(groupId);
+  } catch (e) {
+    debugPrint("Initial load error: $e");
   }
+}
 
   // Обновим метод загрузки сообщений, чтобы они шли в правильном порядке
   Future<void> loadMessages(int groupId) async {
@@ -324,27 +324,34 @@ Future<bool> confirmFinish(int groupId) async {
     }
   }
 
-  Future<void> addRoadmapStep({
-    required int groupId,
-    required String content,
-    required DateTime date,
-    String? instructionUrl,
-    bool isTest = false,
-    bool isRequired = true,
-  }) async {
-    try {
-      await _api.dio.post("/Chat/roadmap", data: {
-        "groupId": groupId,
-        "content": content,
-        "dueDate": date.toUtc().toIso8601String(),
-        "instructionUrl": instructionUrl,
-        "isTest": isTest,
-        "isRequired": isRequired,
-      });
-    } catch (e) {
-      debugPrint("Error addRoadmapStep: $e");
+Future<void> addRoadmapStep({
+  required int groupId,
+  required String content,
+  required DateTime date,
+  String? instructionUrl,
+  bool isTest = false,
+  bool isRequired = true,
+}) async {
+  try {
+    final response = await _api.dio.post("/Chat/roadmap", data: {
+      "groupId": groupId,
+      "content": content,
+      "dueDate": date.toUtc().toIso8601String(),
+      "instructionUrl": instructionUrl,
+      "isTest": isTest,
+      "isRequired": isRequired,
+    });
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      // КРИТИЧЕСКИ ВАЖНО: Обновляем список сразу после добавления
+      await loadRoadmap(groupId); 
+      await loadAllRoadmaps(); // Для обновления на главной
+      notifyListeners();
     }
+  } catch (e) {
+    debugPrint("Error addRoadmapStep: $e");
   }
+}
 
   Future<void> submitStepResult({
     required int stepId,
@@ -400,48 +407,52 @@ Future<bool> confirmFinish(int groupId) async {
 
   // --- AI ТЕСТЫ ---
 
-  Future<String?> generateTest(String topic, String format, int questionsCount) async {
-    try {
-      final response = await _api.dio.post("/Chat/roadmap/generate-test", data: {
-        "topic": topic,
-        "format": format,
-        "questionsCount": questionsCount,
-      });
-      return response.data['testData'];
-    } catch (e) {
-      debugPrint("AI Generation Error: $e");
-      return null;
-    }
+Future<String?> generateTest(String topic, String format, int questionsCount) async {
+  try {
+    final response = await _api.dio.post("/Chat/roadmap/generate-test", data: {
+      "topic": topic,
+      "format": format,
+      "questionsCount": questionsCount,
+    });
+    return response.data['testData'];
+  } on DioException catch (e) {
+    // Вместо падения просто логируем и возвращаем null
+    debugPrint("AI Generation Dio Error: ${e.response?.data}");
+    return null;
+  } catch (e) {
+    debugPrint("AI Generation Unknown Error: $e");
+    return null;
   }
+}
 
-  Future<void> createRoadmapStepWithTest({
-    required int groupId,
-    required String content,
-    required DateTime dueDate,
-    required String testData,
-    int maxAttempts = 3,
-    bool isRequired = true,
-  }) async {
-    try {
-      final response = await _api.dio.post("/Chat/roadmap", data: {
-        "groupId": groupId,
-        "content": content,
-        "dueDate": dueDate.toUtc().toIso8601String(),
-        "isTest": true,
-        "maxAttempts": maxAttempts,
-        "isRequired": isRequired,
-      });
+Future<void> createRoadmapStepWithTest({
+  required int groupId,
+  required String content,
+  required DateTime dueDate,
+  required String testData, // Это наш JSON с вопросами
+  int maxAttempts = 3,
+  bool isRequired = true,
+}) async {
+  try {
+    // ОТПРАВЛЯЕМ ВСЁ ОДНИМ ПАКЕТОМ
+    final response = await _api.dio.post("/Chat/roadmap", data: {
+      "groupId": groupId,
+      "content": content,
+      "dueDate": dueDate.toUtc().toIso8601String(),
+      "isTest": true,
+      "maxAttempts": maxAttempts,
+      "isRequired": isRequired,
+      "testData": testData, // Добавляем данные теста прямо сюда!
+    });
 
-      if (response.statusCode == 200) {
-        int stepId = response.data['id'];
-        await _api.dio.post("/Chat/roadmap/$stepId/save-test", data: jsonDecode(testData));
-        loadRoadmap(groupId);
-        loadAllRoadmaps();
-      }
-    } catch (e) {
-      debugPrint("Error creating AI test step: $e");
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      await loadRoadmap(groupId);
+      notifyListeners();
     }
+  } catch (e) {
+    debugPrint("Ошибка создания теста: $e");
   }
+}
 
   Future<void> submitTestResult(int stepId, double score, int groupId, String answersJson) async {
     try {

@@ -200,17 +200,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     TextField(
                       controller: _nameCtrl, 
                       decoration: AppDecorations.smartInput("Как вас называть?", Icons.person_outline)
-                    ),
-                    const SizedBox(height: 20),
-                    _buildLabel("ПРИВАТНОСТЬ"),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text("Скрытый профиль", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                      subtitle: const Text("Ваши цели будут видеть только партнеры", style: TextStyle(fontSize: 11)),
-                      value: _isPrivate,
-                      activeThumbColor: AppColors.primary,
-                      onChanged: (v) => setState(() => _isPrivate = v),
-                    ),
+                    )
+        
                   ]),
 
                   const SizedBox(height: 30),

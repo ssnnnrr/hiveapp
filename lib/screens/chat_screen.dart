@@ -41,14 +41,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   bool _isInitialized = false;
   bool _isMentioningTask = false;
   List<RoadmapStepDto> _filteredMentionTasks = [];
+  bool _hasSubmittedReviewInThisSession = false;
+  bool _isSystemActionLoading = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    _initializeChat();
-    _messageController.addListener(_onChatInputChanged);
-  }
+@override
+void initState() {
+  super.initState();
+  _tabController = TabController(length: 2, vsync: this);
+  _initializeChat();
+  _messageController.addListener(_onChatInputChanged);
+}
 
 Future<void> _initializeChat() async {
   await Future.delayed(Duration.zero);
@@ -58,24 +60,38 @@ Future<void> _initializeChat() async {
   final authProv = context.read<AuthProvider>();
   final myId = authProv.user?.id ?? 0;
 
-  // Передаем callback onBothFinished
-  // Добавляем context в качестве третьего позиционного аргумента
   await groupProv.openChat(
     widget.group.id, 
     myId,
-    context, // <--- ДОБАВЬТЕ ЭТУ СТРОКУ
+    context,
     onBothFinished: () {
-      // Это выполнится, когда SignalR пришлет сигнал финиша
-      if (mounted) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _showRatingDialog(); 
-        });
-      }
+      if (mounted) _checkAndShowRating();
     },
   );
 
-  if (mounted) setState(() => _isInitialized = true);
+  if (mounted) {
+    setState(() => _isInitialized = true);
+    // Проверка при открытии чата: если уже всё завершено, а мы еще не оценили
+    _checkAndShowRating();
+  }
 }
+
+// Новый метод проверки условий для показа рейтинга
+void _checkAndShowRating() async {
+  if (_isRatingDialogShowing || _hasSubmittedReviewInThisSession) return;
+
+  final groupProv = context.read<GroupProvider>();
+  try {
+    final group = groupProv.groups.firstWhere((g) => g.id == widget.group.id);
+    // Если оба завершили обучение
+    if (group.ownerFinished && group.partnerFinished) {
+      _showRatingDialog();
+    }
+  } catch (e) {
+    debugPrint("Check rating error: $e");
+  }
+}
+
 
   Widget _buildPinnedHeader(MessageDto pinned) {
     return FadeInDown(
@@ -981,6 +997,38 @@ Widget _buildMessagesTab(int myId) {
     );
   }
 
+
+Future<void> _confirmRestart() async {
+  if (_isSystemActionLoading) return;
+  setState(() => _isSystemActionLoading = true);
+  
+  try {
+    // Просто шлем запрос на сервер. 
+    // Весь UI обновится сам, когда придет сигнал RoadmapUpdated в GroupProvider
+    await context.read<GroupProvider>().confirmRestart(widget.group.id);
+  } catch (e) {
+    debugPrint("Restart error: $e");
+  } finally {
+    if (mounted) setState(() => _isSystemActionLoading = false);
+  }
+}
+
+// Метод подтверждения окончания (для учителя)
+Future<void> _confirmFinish() async {
+  if (_isSystemActionLoading) return;
+  setState(() => _isSystemActionLoading = true);
+
+  try {
+    // Шлем подтверждение
+    await context.read<GroupProvider>().confirmPartnerCompletion(widget.group.id);
+    // Окно рейтинга и скрытие кнопок произойдет через SignalR
+  } catch (e) {
+    debugPrint("Confirm error: $e");
+  } finally {
+    if (mounted) setState(() => _isSystemActionLoading = false);
+  }
+}
+
 Widget _buildMessageBubble(MessageDto m, bool isMe) {
   // Следим за изменениями в GroupProvider для обновления состояния закладок
   final prov = context.watch<GroupProvider>();
@@ -1120,7 +1168,6 @@ Widget _buildMessageBubble(MessageDto m, bool isMe) {
 
   Widget _buildRestartProposalBubble(MessageDto m, bool isMe) {
   final prov = context.read<GroupProvider>();
-  final String text = m.content.split('|').last;
 
   return FadeInUp(
     child: Container(
@@ -1128,22 +1175,42 @@ Widget _buildMessageBubble(MessageDto m, bool isMe) {
       margin: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.purple.withValues(alpha:0.05),
+        color: Colors.purple.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(25),
-        border: Border.all(color: Colors.purple.withValues(alpha:0.2), width: 2),
+        border: Border.all(color: Colors.purple.withValues(alpha: 0.2), width: 2),
       ),
       child: Column(
-      children: [
-        Text(m.content.split('|').last),
-        if (!isMe)
-          ElevatedButton(
-            onPressed: () => prov.confirmRestart(widget.group.id), // После этого обе переменные станут false и чат откроется
-            child: const Text("СОГЛАСЕН"),
-          )
-        else
-          const Text("Ожидание согласия партнера..."),
-      ],
-    ),
+        children: [
+          const Icon(Icons.refresh_rounded, color: Colors.purple, size: 30),
+          const SizedBox(height: 10),
+          Text(m.content.split('|').last, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 15),
+          if (!isMe)
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+                    // ВОТ ЗДЕСЬ МЫ ИСПОЛЬЗУЕМ МЕТОД, ЧТОБЫ ОШИБКА ИСЧЕЗЛА:
+                    onPressed: _isSystemActionLoading ? null : _confirmRestart, 
+                    child: _isSystemActionLoading
+                        ? const SizedBox(
+                            width: 20, 
+                            height: 20, 
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)
+                          )
+                        : const Text("СОГЛАСЕН", style: TextStyle(color: Colors.white)),
+                  ),
+                ),
+          ],
+            )
+          else
+            const Text(
+              "Ожидание согласия партнера...",
+              style: TextStyle(color: Colors.grey, fontSize: 12, fontStyle: FontStyle.italic),
+            ),
+        ],
+      ),
     ),
   );
 }
@@ -1197,27 +1264,6 @@ Widget _buildNormalInput() {
   );
 }
 
-Future<void> _confirmFinish() async {
-  try {
-    // Просто шлем запрос. Окно рейтинга откроется САМО через колбэк в _initializeChat
-    bool isBothFinished = await context.read<GroupProvider>().confirmFinish(widget.group.id);
-
-    if (!mounted) return;
-
-    if (!isBothFinished) {
-      // Показываем это только если обучение еще не завершено полностью
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Вы подтвердили выпуск партнера. Ожидаем, когда он завершит свою часть..."),
-          backgroundColor: Colors.blue,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  } catch (e) {
-    debugPrint("Confirm error: $e");
-  }
-}
 
   Widget _buildMessageMenu(MessageDto m, bool isMe) {
   final prov = context.read<GroupProvider>();
@@ -1287,7 +1333,6 @@ Future<void> _confirmFinish() async {
   );
 }
 
-// Строка ~769
 Widget _buildChatInputArea() {
   return Consumer<GroupProvider>(
     builder: (context, prov, _) {
@@ -1295,18 +1340,20 @@ Widget _buildChatInputArea() {
       bool bothFinished = group.ownerFinished && group.partnerFinished;
 
       if (bothFinished) {
-        // Проверяем, нет ли уже активного предложения о перезапуске в последних сообщениях
         bool hasActiveProposal = prov.messages.any((m) => m.content.startsWith("[RESTART_PROPOSAL]"));
 
         return Container(
-          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 25),
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
           decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Color(0xFFF1F5F9)))),
           child: SizedBox(
             width: double.infinity,
             height: 55,
             child: ElevatedButton.icon(
-              // Если запрос уже отправлен — блокируем кнопку
-              onPressed: hasActiveProposal ? null : () => prov.proposeRestart(group.id),
+              onPressed: (hasActiveProposal || _isSystemActionLoading) ? null : () async {
+                setState(() => _isSystemActionLoading = true);
+                await prov.proposeRestart(group.id);
+                if (mounted) setState(() => _isSystemActionLoading = false);
+              },
               icon: Icon(hasActiveProposal ? Icons.hourglass_top : Icons.refresh, color: Colors.white),
               label: Text(
                 hasActiveProposal ? "ОЖИДАНИЕ ПАРТНЕРА..." : "ВОЗОБНОВИТЬ ОБМЕН НАВЫКАМИ", 
@@ -1314,6 +1361,7 @@ Widget _buildChatInputArea() {
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: hasActiveProposal ? Colors.grey : const Color(0xFF0D47A1),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
               ),
             ),
           ),
@@ -1379,33 +1427,33 @@ Widget _buildChatInputArea() {
 Widget _buildRoadmapTab(int myId) {
   return Consumer<GroupProvider>(
     builder: (context, prov, _) {
-      // Безопасное получение данных группы из обновленного списка провайдера
       GroupResponse group;
       try {
         group = prov.groups.firstWhere((g) => g.id == widget.group.id);
       } catch (e) {
-        // Если loadGroups еще не завершился или вернул пустой список, берем данные из конструктора
-        group = widget.group; 
+        group = widget.group;
       }
       
-      // Определяем статусы для текущего пользователя
       bool isOwner = group.ownerId == myId;
-      // Я закончил свое обучение как ученик?
       bool iFinishedAsStudent = isOwner ? group.ownerFinished : group.partnerFinished;
-      // Мой партнер (которого я учу) закончил свое обучение?
       bool partnerFinishedAsStudent = isOwner ? group.partnerFinished : group.ownerFinished;
-      // Полный финал обмена
       bool bothFinished = group.ownerFinished && group.partnerFinished;
 
-      // Разделяем задачи на активные и архивные (из прошлых циклов)
+      // 1. Разделяем задачи на активные и архивные
       final activeSteps = prov.roadmapSteps.where((s) => !s.isArchived).toList();
       final archivedSteps = prov.roadmapSteps.where((s) => s.isArchived).toList();
 
-      // Фильтруем задачи текущего цикла по выбранной роли (Я Ученик / Я Учитель)
-      final List<RoadmapStepDto> tasksForMe = activeSteps.where((s) => s.creatorId != myId).toList();
-      final List<RoadmapStepDto> tasksFromMe = activeSteps.where((s) => s.creatorId == myId).toList();
+      // 2. Фильтруем АКТИВНЫЕ задачи по выбранной роли
+      final List<RoadmapStepDto> activeForMe = activeSteps.where((s) => s.creatorId != myId).toList();
+      final List<RoadmapStepDto> activeFromMe = activeSteps.where((s) => s.creatorId == myId).toList();
       
-      final currentList = _roadmapFilterIndex == 0 ? tasksForMe : tasksFromMe;
+      // 3. Фильтруем АРХИВНЫЕ задачи по выбранной роли (ВАШ ЗАПРОС)
+      final List<RoadmapStepDto> archivedForMe = archivedSteps.where((s) => s.creatorId != myId).toList();
+      final List<RoadmapStepDto> archivedFromMe = archivedSteps.where((s) => s.creatorId == myId).toList();
+
+      // Выбираем списки для текущего индекса фильтра
+      final currentActiveList = _roadmapFilterIndex == 0 ? activeForMe : activeFromMe;
+      final currentArchivedList = _roadmapFilterIndex == 0 ? archivedForMe : archivedFromMe;
 
       return Column(
         children: [
@@ -1423,10 +1471,8 @@ Widget _buildRoadmapTab(int myId) {
                 _filterTabButton("Я УЧИТЕЛЬ", 1),
                 const Spacer(),
                 
-                // ЛОГИКА ДЛЯ ВКЛАДКИ "Я УЧИТЕЛЬ" (Управление учеником)
                 if (_roadmapFilterIndex == 1) ...[
                   if (!partnerFinishedAsStudent) ...[
-                    // Если партнер еще учится - кнопки добавления активны
                     IconButton(
                       icon: const Icon(Icons.add_task, color: AppColors.primary),
                       onPressed: _showAddStepDialog,
@@ -1442,12 +1488,10 @@ Widget _buildRoadmapTab(int myId) {
                       style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold)),
                 ],
 
-                // ЛОГИКА ДЛЯ ВКЛАДКИ "Я УЧЕНИК" (Завершение своего цикла)
                 if (_roadmapFilterIndex == 0 && !iFinishedAsStudent && !bothFinished)
                   TextButton.icon(
                     onPressed: () {
-                      // Валидация: нельзя завершить, если есть задачи ToDo или UnderReview
-                      bool hasPending = tasksForMe.any((s) => s.status != "Done");
+                      bool hasPending = activeForMe.any((s) => s.status != "Done");
                       if (hasPending) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
@@ -1456,7 +1500,6 @@ Widget _buildRoadmapTab(int myId) {
                           ),
                         );
                       } else {
-                        // Отправляем запрос на подтверждение учителю
                         prov.requestMyCompletion(group.id);
                       }
                     },
@@ -1473,31 +1516,34 @@ Widget _buildRoadmapTab(int myId) {
             child: ListView(
               padding: const EdgeInsets.all(20),
               children: [
-                // 1. Текущие задачи выбранной роли
-                if (currentList.isNotEmpty) ...[
+                // ТЕКУЩИЕ ЗАДАЧИ
+                if (currentActiveList.isNotEmpty) ...[
                   Text(
-                    _roadmapFilterIndex == 0 ? "МОИ УРОКИ" : "ПЛАН ДЛЯ ПАРТНЕРА", 
+                    _roadmapFilterIndex == 0 ? "АКТИВНЫЕ УРОКИ" : "ТЕКУЩИЙ ПЛАН ДЛЯ ПАРТНЕРА", 
                     style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 10, color: Colors.grey, letterSpacing: 1.2)
                   ),
                   const SizedBox(height: 15),
-                  ...currentList.map((s) => _buildLogicStepCard(s, myId)),
-                ] else if (!bothFinished)
+                  ...currentActiveList.map((s) => _buildLogicStepCard(s, myId)),
+                ] else if (currentArchivedList.isEmpty && !bothFinished)
                   _buildRoadmapEmptyState(),
 
-                // 2. Архив (История всех завершенных обменов в этом чате)
-                if (archivedSteps.isNotEmpty) ...[
+                // АРХИВНЫЕ ЗАДАЧИ ЭТОЙ РОЛИ
+                if (currentArchivedList.isNotEmpty) ...[
                   const SizedBox(height: 30),
                   Theme(
                     data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
                     child: ExpansionTile(
+                      initiallyExpanded: false,
                       tilePadding: EdgeInsets.zero,
                       leading: const Icon(Icons.history_edu_rounded, color: Colors.blueGrey),
                       title: Text(
-                        "АРХИВ ОБУЧЕНИЯ (${archivedSteps.length})", 
+                        _roadmapFilterIndex == 0 
+                            ? "АРХИВ МОИХ УРОКОВ (${currentArchivedList.length})" 
+                            : "ИСТОРИЯ ЗАДАНИЙ ПАРТНЕРУ (${currentArchivedList.length})", 
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blueGrey)
                       ),
-                      children: archivedSteps.map((s) => Opacity(
-                        opacity: 0.6,
+                      children: currentArchivedList.map((s) => Opacity(
+                        opacity: 0.85, // Делаем чуть ярче, чтобы текст был читаемым
                         child: _buildLogicStepCard(s, myId),
                       )).toList(),
                     ),
@@ -1514,7 +1560,6 @@ Widget _buildRoadmapTab(int myId) {
 }
 
 Widget _buildCompletionRequestBubble(MessageDto m, bool isMe) {
-  final prov = context.read<GroupProvider>(); // Используем read для экшенов
   final String text = m.content.split('|').last;
 
   return FadeInUp(
@@ -1523,12 +1568,14 @@ Widget _buildCompletionRequestBubble(MessageDto m, bool isMe) {
       margin: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFFE3F2FD), // Светло-голубой
+        color: const Color(0xFFE3F2FD),
         borderRadius: BorderRadius.circular(25),
-        border: Border.all(color: Colors.blue.withValues(alpha:0.3), width: 2),
+        border: Border.all(color: Colors.blue.withValues(alpha: 0.3), width: 2),
       ),
       child: Column(
         children: [
+          const Icon(Icons.verified_user_rounded, color: Colors.blue, size: 30),
+          const SizedBox(height: 10),
           Text(text, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 20),
           if (!isMe)
@@ -1537,21 +1584,30 @@ Widget _buildCompletionRequestBubble(MessageDto m, bool isMe) {
                 Expanded(
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                    onPressed: () => _confirmFinish(), // ВЫЗЫВАЕМ ОБЕРТКУ ВМЕСТО ПРЯМОГО КЛИКА
-                    child: const Text("ПОДТВЕРЖДАЮ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    // Если мы уже нажали кнопку, она становится disabled (null)
+                    onPressed: _isSystemActionLoading ? null : _confirmFinish, 
+                    child: _isSystemActionLoading 
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text("ПОДТВЕРЖДАЮ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () => prov.rejectCompletion(widget.group.id),
+                    // Блокируем и вторую кнопку тоже
+                    onPressed: _isSystemActionLoading ? null : () async {
+                      setState(() => _isSystemActionLoading = true);
+                      await context.read<GroupProvider>().rejectCompletion(widget.group.id);
+                      // Здесь не сбрасываем loading, SignalR сам обновит сообщения
+                    },
                     child: const Text("ЕЩЕ НЕТ"),
                   ),
                 ),
               ],
             )
           else
-            const Text("Ожидание подтверждения учителя...", style: TextStyle(color: Colors.grey, fontSize: 12)),
+            const Text("Ожидание подтверждения учителя...", 
+              style: TextStyle(color: Colors.grey, fontSize: 12, fontStyle: FontStyle.italic)),
         ],
       ),
     ),
@@ -1586,97 +1642,117 @@ Widget _buildLogicStepCard(RoadmapStepDto s, int myId) {
     bool isDone = s.status == "Done";
     bool isReview = s.status == "UnderReview";
     bool isRejected = s.teacherComment != null && s.status == "ToDo";
+    bool isArchived = s.isArchived;
 
     // ЛОГИКА ПРОСТОГО ЧЕКБОКСА:
     // Если это не тест и не обязательное задание (isRequired = false)
     bool isSimpleTask = !s.isTest && !s.isRequired;
 
+    // Цвета границ
+    Color borderColor = isDone 
+        ? Colors.green 
+        : (isRejected ? Colors.orange : (isArchived ? Colors.grey.shade200 : AppColors.primary));
+
     return FadeInUp(
       child: Container(
         margin: const EdgeInsets.only(bottom: 18),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: isArchived ? const Color(0xFFFDFDFD) : Colors.white,
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha:0.03),
+              color: Colors.black.withValues(alpha: isArchived ? 0.01 : 0.03),
               blurRadius: 15,
               offset: const Offset(0, 5),
             ),
           ],
           border: Border.all(
-            color: isDone
-                ? Colors.green.withValues(alpha:0.2)
-                : (isRejected
-                      ? Colors.orange.withValues(alpha:0.3)
-                      : Colors.grey.shade100),
-            width: 2,
+            color: borderColor.withValues(alpha: isArchived ? 0.2 : 0.4),
+            width: isArchived ? 1.5 : 2,
           ),
         ),
         child: Column(
           children: [
             ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: 10,
-              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
 
-              // СЛЕВА: Чекбокс для простых задач или иконка статуса для сложных
-              leading: isSimpleTask
-                  ? Transform.scale(
-                      scale: 1.2,
-                      child: Checkbox(
-                        value: isDone,
-                        activeColor: Colors.green,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(5),
+              // --- ЛЕВАЯ ЧАСТЬ: ИКОНКА ИЛИ ЧЕКБОКС ---
+              leading: isArchived 
+                ? Icon(
+                    isDone ? Icons.check_circle : Icons.history, 
+                    color: isDone ? Colors.green : Colors.grey,
+                    size: 28,
+                  )
+                : (isSimpleTask 
+                    ? Transform.scale(
+                        scale: 1.2,
+                        child: Checkbox(
+                          value: isDone,
+                          activeColor: Colors.green,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          // Только ученик может переключать простые задачи
+                          onChanged: isTeacher 
+                              ? null 
+                              : (val) {
+                                  context.read<GroupProvider>().toggleStepComplete(
+                                    stepId: s.id, 
+                                    groupId: widget.group.id
+                                  );
+                                },
                         ),
-                        // Учитель не может отмечать за ученика, только ученик сам
-                        onChanged: isTeacher || s.isArchived
-                            ? null
-                            : (val) {
-                                context
-                                    .read<GroupProvider>()
-                                    .toggleStepComplete(
-                                      stepId: s.id,
-                                      groupId: widget.group.id,
-                                    );
-                              },
-                      ),
-                    )
-                  : _buildStepStatusIcon(s, isDone),
+                      )
+                    : _buildStepStatusIcon(s, isDone)),
 
               title: Text(
                 s.content,
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   decoration: isDone ? TextDecoration.lineThrough : null,
-                  color: isDone ? Colors.grey : AppColors.navy,
+                  color: isArchived ? Colors.blueGrey.shade700 : AppColors.navy,
                 ),
               ),
               subtitle: Text(
-                "Дедлайн: ${DateFormat('dd.MM.yyyy').format(s.dueDate)}",
+                isArchived 
+                  ? "Завершено в прошлом цикле" 
+                  : "Дедлайн: ${DateFormat('dd.MM.yyyy').format(s.dueDate)}",
                 style: const TextStyle(fontSize: 11),
               ),
-              trailing: _buildTaskActionMenu(s, isTeacher),
               
-              // Если задача сложная, нажатие открывает диалог сдачи/теста
-              onTap: (isSimpleTask || s.isArchived) 
+              // Меню действий (три точки) только для активных задач
+              trailing: isArchived ? null : _buildTaskActionMenu(s, isTeacher),
+              
+              // Нажатие на карточку (для тестов и артефактов)
+              onTap: (isSimpleTask || isArchived) 
                 ? null 
                 : () => _handlePartnerTaskAction(s),
             ),
 
-            if (isRejected) _buildRejectedCommentBlock(s.teacherComment!),
+            // Блок правок учителя (только для активных)
+            if (isRejected && !isArchived) _buildRejectedCommentBlock(s.teacherComment!),
 
-            // Контентная часть (показываем кнопки только если задача активна и не простая)
-            if (!s.isArchived) ...[
+            // --- КОНТЕНТНАЯ ЧАСТЬ (Только для активных сложных задач) ---
+            if (!isArchived) ...[
               if (s.isTest)
                 _buildTestStepBlock(s, isTeacher, isDone)
               else if (s.isRequired && !isDone)
                 _buildArtifactSubmissionBlock(s, isTeacher, isReview),
+            ] 
+            // В архиве для тестов показываем только кнопку просмотра разбора
+            else if (s.isTest && s.usedAttempts > 0) ...[
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: TextButton.icon(
+                  onPressed: () => _showDetailedTestResults(s),
+                  icon: const Icon(Icons.analytics_outlined, size: 16),
+                  label: const Text("ПОСМОТРЕТЬ РЕЗУЛЬТАТЫ ТЕСТА", 
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                ),
+              ),
             ],
 
-            // Ресурсы (ссылки/файлы) показываем всегда
+            // --- РЕСУРСЫ: Доступны ВСЕГДА (и в активе, и в архиве) ---
             if (s.instructionUrl != null || s.artifactUrl != null)
               _buildStepResourcesRow(s),
 
@@ -1686,7 +1762,6 @@ Widget _buildLogicStepCard(RoadmapStepDto s, int myId) {
       ),
     );
   }
-
 
 
   // Метод для обработки нажатия на "сложные" задачи (тесты или задания с артефактами)
@@ -2087,133 +2162,116 @@ Widget _buildLogicStepCard(RoadmapStepDto s, int myId) {
     );
   }
 
-void _showRatingDialog() {
-  // 1. Проверка: если окно уже открыто, не открываем его снова
+void _showRatingDialog() async {
   if (_isRatingDialogShowing) return;
   _isRatingDialogShowing = true;
 
-  int selectedRating = 5;
-  final commentCtrl = TextEditingController();
+  final userProv = context.read<UserProvider>();
+  final myId = context.read<AuthProvider>().user?.id;
+  
+  // 1. Загружаем профиль партнера, чтобы получить существующий отзыв
+  await userProv.loadTargetProfile(widget.group.otherUserId!);
+  final partnerProfile = userProv.targetFullProfile;
+  
+  // 2. Ищем наш предыдущий отзыв в профиле партнера
+  ReviewDto? existingReview;
+  if (partnerProfile != null && myId != null) {
+    try {
+      existingReview = partnerProfile.reviews.firstWhere(
+        (r) => r.reviewerName == context.read<AuthProvider>().user?.username
+      );
+    } catch (_) {}
+  }
+
+  int selectedRating = existingReview?.rating ?? 5;
+  final commentCtrl = TextEditingController(text: existingReview?.comment ?? "");
+
+  if (!mounted) return;
 
   MainDashboardLayout.showHiveDialog(
     context,
     StatefulBuilder(
       builder: (ctx, setSt) => Padding(
         padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Иконка и заголовок
-            const Icon(Icons.stars_rounded, size: 64, color: Colors.amber),
-            const SizedBox(height: 16),
-            Text(
-              "ОБУЧЕНИЕ ЗАВЕРШЕНО!",
-              style: GoogleFonts.manrope(
-                fontWeight: FontWeight.w900,
-                fontSize: 18,
-                color: AppColors.navy,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.stars_rounded, size: 64, color: Colors.amber),
+              const SizedBox(height: 16),
+              Text(
+                existingReview != null ? "ОБНОВИТЬ ОТЗЫВ" : "ОБУЧЕНИЕ ЗАВЕРШЕНО!",
+                style: GoogleFonts.manrope(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy),
               ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              "Пожалуйста, оцените работу вашего партнера. Ваш отзыв влияет на его BeePower.",
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey, fontSize: 13),
-            ),
-            const SizedBox(height: 25),
-
-            // Выбор звезд
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(5, (i) {
-                return IconButton(
-                  onPressed: () => setSt(() => selectedRating = i + 1),
-                  icon: Icon(
-                    i < selectedRating ? Icons.star_rounded : Icons.star_outline_rounded,
-                    color: Colors.amber,
-                    size: 42,
-                  ),
-                );
-              }),
-            ),
-            const SizedBox(height: 20),
-
-            // Поле для текстового отзыва
-            TextField(
-              controller: commentCtrl,
-              maxLines: 3,
-              style: const TextStyle(fontSize: 14),
-              decoration: AppDecorations.smartInput(
-                "Ваш отзыв о партнере...",
-                Icons.rate_review_outlined,
+              const SizedBox(height: 8),
+              Text(
+                existingReview != null 
+                  ? "Вы можете изменить свой предыдущий отзыв о партнере." 
+                  : "Пожалуйста, оцените работу вашего партнера. Ваш отзыв влияет на его BeePower.",
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.grey, fontSize: 13),
               ),
-            ),
-            const SizedBox(height: 32),
-
-            // Кнопка отправки
-            SizedBox(
-              width: double.infinity,
-              height: 55,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.navy,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                onPressed: () async {
-                  final userProv = context.read<UserProvider>();
-                  
-                  // Вызываем API отправки отзыва
-                  bool ok = await userProv.submitReview(
-                    widget.group.otherUserId!, 
-                    selectedRating, 
-                    commentCtrl.text.trim(),
+              const SizedBox(height: 25),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(5, (i) {
+                  return IconButton(
+                    onPressed: () => setSt(() => selectedRating = i + 1),
+                    icon: Icon(
+                      i < selectedRating ? Icons.star_rounded : Icons.star_outline_rounded,
+                      color: Colors.amber, size: 42,
+                    ),
                   );
+                }),
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: commentCtrl,
+                maxLines: 3,
+                style: const TextStyle(fontSize: 14),
+                decoration: AppDecorations.smartInput("Ваш отзыв о партнере...", Icons.rate_review_outlined),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                height: 55,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.navy,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () async {
+                    bool ok = await userProv.submitReview(
+                      widget.group.otherUserId!, 
+                      selectedRating, 
+                      commentCtrl.text.trim(),
+                    );
 
-                  if (mounted) {
-                    if (ok) {
-                      // Сбрасываем флаг, закрываем диалог и выходим из чата
+                    if (mounted && ok) {
+                      _hasSubmittedReviewInThisSession = true;
                       _isRatingDialogShowing = false;
-                      Navigator.pop(ctx); 
-                      Navigator.pop(context); // Выход в список чатов
-                      
+                      Navigator.pop(ctx);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text("Спасибо! Ваш отзыв учтен."),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    } else {
-                      // Если текст не прошел модерацию (мат)
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text("Отзыв содержит недопустимую лексику!"),
-                          backgroundColor: Colors.redAccent,
-                        ),
+                        const SnackBar(content: Text("Отзыв сохранен!"), backgroundColor: Colors.green),
                       );
                     }
-                  }
-                },
-                child: const Text(
-                  "ОТПРАВИТЬ И ВЫЙТИ",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1,
-                  ),
+                  },
+                  child: const Text("СОХРАНИТЬ И ВЫЙТИ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
-            ),
-          ],
+              TextButton(
+                onPressed: () {
+                  _isRatingDialogShowing = false;
+                  Navigator.pop(ctx);
+                },
+                child: const Text("ПОЗЖЕ", style: TextStyle(color: Colors.grey)),
+              )
+            ],
+          ),
         ),
       ),
     ),
-  ).then((_) {
-    // Если пользователь закрыл диалог кликом мимо или кнопкой назад,
-    // сбрасываем флаг, чтобы при следующем входе/событии окно могло открыться снова
-    _isRatingDialogShowing = false;
-  });
+  ).then((_) => _isRatingDialogShowing = false);
 }
 
   // 1. Добавьте этот метод внутрь _ChatScreenState
@@ -2263,25 +2321,36 @@ void _showRatingDialog() {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(15),
-      color: const Color(0xFFF8FAFC),
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
+      // В архиве фон ресурсов делаем чуть темнее для контраста
+      color: s.isArchived ? const Color(0xFFF1F4F9) : const Color(0xFFF8FAFC),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (s.instructionUrl != null)
-            _resourceBadge(
-              "ТЕОРИЯ / МАТЕРИАЛ",
-              Icons.menu_book,
-              Colors.blue,
-              s.instructionUrl!,
+          if (s.isArchived)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 10),
+              child: Text("АРХИВНЫЕ МАТЕРИАЛЫ:", style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: Colors.grey)),
             ),
-          if (s.artifactUrl != null)
-            _resourceBadge(
-              "ОТЧЕТ УЧЕНИКА",
-              Icons.description,
-              Colors.green,
-              s.artifactUrl!,
-            ),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              if (s.instructionUrl != null)
+                _resourceBadge(
+                  "ТЕОРИЯ / МАТЕРИАЛ",
+                  Icons.menu_book,
+                  Colors.blue,
+                  s.instructionUrl!,
+                ),
+              if (s.artifactUrl != null)
+                _resourceBadge(
+                  "ОТЧЕТ УЧЕНИКА",
+                  Icons.description,
+                  Colors.green,
+                  s.artifactUrl!,
+                ),
+            ],
+          ),
         ],
       ),
     );

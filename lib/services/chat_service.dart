@@ -16,6 +16,7 @@ class ChatService {
     Function(int) onNotificationDeleted,
     Function(String) onStatusChanged
   ) async {
+    // 1. Останавливаем старое соединение, если оно есть
     if (_hubConnection != null) {
       await _hubConnection!.stop();
     }
@@ -25,49 +26,28 @@ class ChatService {
     if (base.endsWith('/')) base = base.substring(0, base.length - 1);
     final hubUrl = "$base/chatHub";
 
-    _hubConnection!.on("NotificationReceived", (args) {
-       onRoadmapUpdated(); // Можно использовать этот же триггер для рефреша
-    });
-
+    // 2. СНАЧАЛА СОЗДАЕМ СОЕДИНЕНИЕ
     _hubConnection = HubConnectionBuilder()
         .withUrl(hubUrl, options: HttpConnectionOptions(
           accessTokenFactory: () async => token ?? '',
           transport: HttpTransportType.WebSockets,
-          // ИСПРАВЛЕНО: Удален несуществующий ConsoleLogger. 
-          // Библиотека сама пишет в консоль, если не указать иное.
         ))
-        // ИСПРАВЛЕНО: Удален null из списка задержек
         .withAutomaticReconnect(retryDelays: [0, 2000, 5000, 10000]) 
         .build();
 
-    // Обработка автоматического переподключения
-    _hubConnection!.onreconnecting(({error}) {
-      onStatusChanged("Потеря связи. Переподключение...");
-    });
-
-    _hubConnection!.onreconnected(({connectionId}) async {
-      // ПЕРЕЗАХОДИМ В ГРУППУ ПОСЛЕ ВОССТАНОВЛЕНИЯ СВЯЗИ
-      try {
-        await _hubConnection!.invoke("JoinGroup", args: [groupId.toString()]);
-        onStatusChanged("Связь восстановлена");
-      } catch (e) {
-        debugPrint("Rejoin error: $e");
-      }
-    });
-
-    _hubConnection!.onclose(({error}) {
-      onStatusChanged("Чат оффлайн");
-    });
-
-    // Слушатели событий сервера
+    // 3. ЗАТЕМ РЕГИСТРИРУЕМ СЛУШАТЕЛЕЙ (теперь _hubConnection не null)
+    
     _hubConnection!.on("ReceiveMessage", (args) {
       if (args != null && args.isNotEmpty) {
+        debugPrint("SignalR: Message Received: ${args[0]}");
         onMessageReceived(MessageDto.fromJson(args[0] as Map<String, dynamic>));
       }
     });
 
     _hubConnection!.on("RoadmapUpdated", (args) => onRoadmapUpdated());
     
+    _hubConnection!.on("NotificationReceived", (args) => onRoadmapUpdated());
+
     _hubConnection!.on("MessageDeleted", (args) {
       if (args != null && args.isNotEmpty) {
         final data = args[0] as Map<String, dynamic>;
@@ -75,14 +55,33 @@ class ChatService {
       }
     });
 
+    _hubConnection!.on("NotificationDeleted", (args) {
+       if (args != null && args.isNotEmpty) {
+         onNotificationDeleted(args[0] as int);
+       }
+    });
+
+    // Статусы переподключения
+    _hubConnection!.onreconnecting(({error}) => onStatusChanged("Переподключение..."));
+    _hubConnection!.onreconnected(({connectionId}) async {
+      await _hubConnection!.invoke("JoinGroup", args: [groupId.toString()]);
+      onStatusChanged("Онлайн");
+    });
+    _hubConnection!.onclose(({error}) => onStatusChanged("Оффлайн"));
+
+    // 4. ЗАПУСКАЕМ И ВХОДИМ В ГРУППУ
     try {
       await _hubConnection!.start();
-      // ЗАХОДИМ В КОМНАТУ ГРУППЫ
+      debugPrint("SignalR: Connection started");
+      
+      // КРИТИЧНО: Входим в комнату, чтобы получать сообщения именно этой группы
       await _hubConnection!.invoke("JoinGroup", args: [groupId.toString()]);
+      debugPrint("SignalR: Joined group $groupId");
+      
       onStatusChanged("Онлайн");
     } catch (e) {
       debugPrint("SignalR Start Error: $e");
-      onStatusChanged("Ошибка подключения");
+      onStatusChanged("Ошибка сети");
     }
   }
 

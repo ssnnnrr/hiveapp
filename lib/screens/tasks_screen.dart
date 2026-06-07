@@ -624,99 +624,103 @@ Future<void> _handleResourceOpen(String? path) async {
 
   // --- КАРТОЧКИ ---
 
-  Widget _buildEnhancedTaskCard(
-    TaskResponse t,
-    String myName,
-    String? myAvatar,
-    int myId,
-  ) {
-    bool isDone =
-        t.status == "Done" || t.completions.any((c) => c.username == myName);
-    final today = DateTime(
-      DateTime.now().year,
-      DateTime.now().month,
-      DateTime.now().day,
-    );
-    bool isOverdue = t.dueDate.toLocal().isBefore(today) && !isDone;
+  // Находим этот метод в tasks_screen.dart и заменяем логику определения isDone
+Widget _buildEnhancedTaskCard(
+  TaskResponse t,
+  String myName,
+  String? myAvatar,
+  int myId,
+) {
+  // ИСПРАВЛЕНИЕ: Теперь мы проверяем ТОЛЬКО наличие вашего имени в списке выполнивших.
+  // Мы игнорируем t.status == "Done", так как это глобальный статус (мог выставить создатель)
+  bool isDone = t.completions.any((c) => c.username == myName);
+  
+  final today = DateTime(
+    DateTime.now().year,
+    DateTime.now().month,
+    DateTime.now().day,
+  );
+  bool isOverdue = t.dueDate.toLocal().isBefore(today) && !isDone;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 15),
-      child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: isOverdue
-                  ? Colors.redAccent.withValues(alpha:0.4)
-                  : const Color(0xFFF1F5F9),
-              width: isOverdue ? 2 : 1,
-            ),
-            boxShadow: [
-              BoxShadow(color: Colors.black.withValues(alpha:0.02), blurRadius: 10),
-            ],
+  return Container(
+    margin: const EdgeInsets.only(bottom: 15),
+    child: Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isOverdue
+                ? Colors.redAccent.withValues(alpha: 0.4)
+                : const Color(0xFFF1F5F9),
+            width: isOverdue ? 2 : 1,
           ),
-          child: Column(
-            children: [
-              ListTile(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 10,
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 10),
+          ],
+        ),
+        child: Column(
+          children: [
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 10,
+              ),
+              leading: Checkbox(
+                value: isDone,
+                activeColor: Colors.green,
+                // Передаем текущее состояние (выполнено именно вами или нет)
+                onChanged: (v) =>
+                    _handleTaskCheckbox(t, myName, myAvatar, isDone),
+              ),
+              title: Text(
+                t.title,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                  decoration: isDone ? TextDecoration.lineThrough : null,
+                  color: isDone ? Colors.grey : AppColors.navy,
                 ),
-                leading: Checkbox(
-                  value: isDone,
-                  activeColor: Colors.green,
-                  onChanged: (v) =>
-                      _handleTaskCheckbox(t, myName, myAvatar, isDone),
-                ),
-                title: Text(
-                  t.title,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                    decoration: isDone ? TextDecoration.lineThrough : null,
-                    color: isDone ? Colors.grey : AppColors.navy,
-                  ),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "ЦЕЛЬ: ${t.goalTitle.toUpperCase()}",
-                      style: const TextStyle(
-                        fontSize: 9,
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w900,
-                      ),
+              ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "ЦЕЛЬ: ${t.goalTitle.toUpperCase()}",
+                    style: const TextStyle(
+                      fontSize: 9,
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w900,
                     ),
-                    if (isOverdue)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: InkWell(
-                          onTap: () => _rescheduleGeneral(t.id, 'task'),
-                          child: const Text(
-                            "ПРОПУЩЕНО. ПЕРЕНЕСТИ?",
-                            style: TextStyle(
-                              color: Colors.red,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
+                  ),
+                  if (isOverdue)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: InkWell(
+                        onTap: () => _rescheduleGeneral(t.id, 'task'),
+                        child: const Text(
+                          "ПРОПУЩЕНО. ПЕРЕНЕСТИ?",
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
-                    _buildCompletionRow(t),
-                  ],
-                ),
-                trailing: _buildActionsMenu(t.id, 'task', t),
+                    ),
+                  _buildCompletionRow(t), // Здесь отобразятся аватарки всех выполнивших
+                ],
               ),
-              _buildComments(t, myId),
-            ],
-          ),
+              trailing: _buildActionsMenu(t.id, 'task', t),
+            ),
+            _buildComments(t, myId),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
  Widget _buildEnhancedPartnerCard(RoadmapStepDto s) {
   bool isDone = s.status == "Done";

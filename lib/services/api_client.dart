@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart'; // Добавьте этот импорт
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'api_config.dart';
 
@@ -6,7 +7,6 @@ class ApiClient {
   late Dio dio;
   final _storage = const FlutterSecureStorage();
 
-  // Создаем синглтон (один экземпляр на всё приложение)
   static final ApiClient _instance = ApiClient._internal();
   factory ApiClient() => _instance;
 
@@ -15,20 +15,25 @@ class ApiClient {
       baseUrl: ApiConfig.baseUrl,
       connectTimeout: const Duration(seconds: 30),
       receiveTimeout: const Duration(seconds: 30),
-      sendTimeout: const Duration(seconds: 40),
+      // ИСПРАВЛЕНИЕ: На Web не шлем sendTimeout, если это не POST с телом
+      sendTimeout: kIsWeb ? null : const Duration(seconds: 30), 
       followRedirects: true,
     ));
 
-    // ИНТЕРЦЕПТОР: Это магия, которая добавляет токен в каждый заголовок
     dio.interceptors.add(InterceptorsWrapper(
-  onRequest: (options, handler) async {
-    final token = await _storage.read(key: 'jwt_token');
-    if (token != null) {
-      // Убеждаемся, что нет лишних пробелов
-      options.headers["Authorization"] = "Bearer ${token.trim()}";
-    }
-    return handler.next(options);
-  },
-));
+      onRequest: (options, handler) async {
+        final token = await _storage.read(key: 'jwt_token');
+        if (token != null) {
+          options.headers["Authorization"] = "Bearer ${token.trim()}";
+        }
+        
+        // Дополнительная защита для Web:
+        if (kIsWeb && options.data == null) {
+          options.sendTimeout = null;
+        }
+        
+        return handler.next(options);
+      },
+    ));
   }
 }
