@@ -21,6 +21,7 @@ class GroupProvider extends ChangeNotifier {
   final Set<int> _myPinnedMessages = {}; 
   bool _isLoading = false;
   int? _activeGroupId;
+  bool _isProcessingSignalR = false;
 
   // --- ГЕТТЕРЫ ---
   List<GroupResponse> get groups => _groups;
@@ -83,41 +84,43 @@ Future<void> openChat(int groupId, int myId, BuildContext context, {VoidCallback
       await _chatService.initSignalR(
         groupId,
         (newMessage) { // OnMessageReceived
-          if (!_messages.any((m) => m.id == newMessage.id)) {
-            _messages.insert(0, newMessage); 
-            notifyListeners();
-          }
-        },
-        () async { // OnRoadmapUpdated
-          debugPrint("--- SIGNALR: Сигнал обновления (Roadmap/Groups/Messages) ---");
-          
-          // Проверяем статус до обновления
-          bool wasBothFinished = false;
-          try {
-            var g = _groups.firstWhere((g) => g.id == groupId);
-            wasBothFinished = g.ownerFinished && g.partnerFinished;
-          } catch (_) {}
-
-          // Загружаем всё заново, используя try-catch для каждого, 
-          // чтобы ошибка Dio на Web не блокировала всё обновление
-          await Future.wait([
-            loadGroups().catchError((e) => debugPrint("LoadGroups error: $e")),
-            loadRoadmap(groupId).catchError((e) => debugPrint("LoadRoadmap error: $e")),
-            loadMessages(groupId).catchError((e) => debugPrint("LoadMessages error: $e")),
-          ]);
-
-          // Проверяем статус после обновления
-          try {
-            var g = _groups.firstWhere((g) => g.id == groupId);
-            bool isNowBothFinished = g.ownerFinished && g.partnerFinished;
-            
-            if (!wasBothFinished && isNowBothFinished && onBothFinished != null) {
-              onBothFinished();
+          // Используем microtask для безопасности на Web
+          Future.microtask(() {
+            if (!_messages.any((m) => m.id == newMessage.id)) {
+              _messages.insert(0, newMessage); 
+              notifyListeners();
             }
-          } catch (_) {}
-          
-          notifyListeners(); 
+          });
         },
+        () async {
+  debugPrint("--- SIGNALR: Сигнал обновления ---");
+  
+  // 1. Защита от "дребезга" (если пришло несколько сигналов сразу)
+  if (_isProcessingSignalR) return;
+  _isProcessingSignalR = true;
+
+  try {
+    // 2. Загружаем данные без уведомления слушателей
+    await Future.wait([
+      loadGroups(),
+      loadRoadmap(groupId),
+      loadMessages(groupId),
+    ]);
+
+    // 3. БЕЗОПАСНОЕ ОБНОВЛЕНИЕ: Ждем, пока Flutter Web будет готов к новому кадру
+    if (hasListeners) {
+      // Это предотвращает Assertion failed в window.dart
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (hasListeners) notifyListeners();
+      });
+    }
+  } catch (e) {
+    debugPrint("Ошибка обновления данных: $e");
+  } finally {
+    await Future.delayed(const Duration(milliseconds: 500));
+    _isProcessingSignalR = false; // Открываем замок
+  }
+},
         (deletedId) { // OnMessageDeleted
           _messages.removeWhere((m) => m.id == deletedId);
           notifyListeners();
@@ -178,18 +181,35 @@ Future<void> requestMyCompletion(int groupId) async {
   }
 }
 
-  Future<void> confirmPartnerCompletion(int groupId) async {
-    try {
-      final response = await _api.dio.post("/Groups/$groupId/confirm-partner-completion");
-      if (response.statusCode == 200) {
-        await loadGroups(); 
-        await loadRoadmap(groupId);
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint("Error confirmPartnerCompletion: $e");
+Future<bool> confirmPartnerCompletion(int groupId) async {
+  try {
+    final response = await _api.dio.post("/Groups/$groupId/confirm-partner-completion");
+    
+    // Если сервер вернул, что оба завершили (isFullyFinished: true)
+    if (response.statusCode == 200) {
+      // Обновляем локальные данные, чтобы кнопки исчезли из Roadmap и чата
+      await loadGroups(); 
+      await loadMessages(groupId);
+      
+      final data = response.data;
+      return data['isFullyFinished'] ?? false;
     }
+    return false;
+  } catch (e) {
+    debugPrint("Error confirming completion: $e");
+    return false;
   }
+}
+
+Future<void> rejectCompletion(int groupId) async {
+  try {
+    await _api.dio.post("/Groups/$groupId/reject-completion");
+    // Здесь тоже ничего лишнего не вызываем
+  } catch (e) {
+    debugPrint("Error rejecting completion: $e");
+    rethrow;
+  }
+}
 
 
   Future<void> requestFinish(int groupId) async {
@@ -216,19 +236,6 @@ Future<bool> confirmFinish(int groupId) async {
     return false; // Если ошибка или не оба закончили
   }
 
-
-  Future<void> rejectCompletion(int groupId) async {
-    try {
-      final response = await _api.dio.post("/Groups/$groupId/reject-completion");
-      if (response.statusCode == 200) {
-        await loadGroups();
-        await loadRoadmap(groupId);
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint("Error rejectCompletion: $e");
-    }
-  }
 
   Future<void> proposeRestart(int groupId) async {
     try {

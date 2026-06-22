@@ -118,9 +118,22 @@ class _GroupsScreenState extends State<GroupsScreen> {
     );
   }
 
-  Widget _buildGroupCard(GroupResponse g, int myId) {
+ Widget _buildGroupCard(GroupResponse g, int myId) {
     bool hasUnread = g.unreadCount > 0;
     String time = g.lastMessageAt != null ? DateFormat('HH:mm').format(g.lastMessageAt!) : "";
+
+    // --- ЛОГИКА ОЧИСТКИ СООБЩЕНИЯ ОТ ТЕГОВ [RESTART_PROPOSAL] И Т.Д. ---
+    String rawMessage = g.lastMessage ?? (g.isSolo ? "Начните диалог" : "Чат: ${g.membersCount} участников");
+    String displayMessage = rawMessage;
+
+    if (displayMessage.contains('|')) {
+      // Если есть разделитель |, берем только текст после него (само сообщение)
+      displayMessage = displayMessage.split('|').last;
+    } else {
+      // Если разделителя нет, просто вырезаем всё, что находится в квадратных скобках
+      displayMessage = displayMessage.replaceAll(RegExp(r'\[.*?\]'), '').trim();
+    }
+    // -----------------------------------------------------------------
 
     return Container(
       margin: const EdgeInsets.only(bottom: 15),
@@ -135,14 +148,13 @@ class _GroupsScreenState extends State<GroupsScreen> {
         child: InkWell(
           borderRadius: BorderRadius.circular(24),
           onTap: () {
-            
             Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(group: g)));
           },
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                // Техно-аватар
+                // Аватар
                 Stack(
                   children: [
                     Container(
@@ -156,7 +168,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                       ),
                       child: Center(
                         child: Text(
-                          g.name[0].toUpperCase(), 
+                          g.name.isNotEmpty ? g.name[0].toUpperCase() : "?", 
                           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 22)
                         ),
                       ),
@@ -198,7 +210,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        g.lastMessage ?? (g.isSolo ? "Начните диалог" : "Группа: ${g.membersCount} участников"),
+                        displayMessage, // Используем очищенную строку
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(

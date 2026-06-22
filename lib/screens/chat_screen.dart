@@ -1013,18 +1013,44 @@ Future<void> _confirmRestart() async {
   }
 }
 
-// Метод подтверждения окончания (для учителя)
+
+
 Future<void> _confirmFinish() async {
+  if (_isSystemActionLoading) return;
+  
+  setState(() => _isSystemActionLoading = true); // Блокируем кнопки немедленно
+
+  try {
+    // 1. Отправляем запрос и получаем результат (завершено ли всё полностью)
+    bool isFullyFinished = await context.read<GroupProvider>().confirmPartnerCompletion(widget.group.id);
+    
+    // 2. Если оба участника подтвердили завершение
+    if (isFullyFinished && mounted) {
+      _showRatingDialog(); // Сразу открываем окно отзыва
+    }
+  } catch (e) {
+    debugPrint("Confirm error: $e");
+  } finally {
+    // 3. Снимаем статус загрузки
+    if (mounted) {
+      setState(() => _isSystemActionLoading = false);
+    }
+  }
+}
+
+// Аналогично для _rejectFinish
+Future<void> _rejectFinish() async {
   if (_isSystemActionLoading) return;
   setState(() => _isSystemActionLoading = true);
 
   try {
-    // Шлем подтверждение
-    await context.read<GroupProvider>().confirmPartnerCompletion(widget.group.id);
-    // Окно рейтинга и скрытие кнопок произойдет через SignalR
+    await context.read<GroupProvider>().rejectCompletion(widget.group.id);
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted && _isSystemActionLoading) {
+        setState(() => _isSystemActionLoading = false);
+      }
+    });
   } catch (e) {
-    debugPrint("Confirm error: $e");
-  } finally {
     if (mounted) setState(() => _isSystemActionLoading = false);
   }
 }
@@ -1488,25 +1514,24 @@ Widget _buildRoadmapTab(int myId) {
                       style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold)),
                 ],
 
-                if (_roadmapFilterIndex == 0 && !iFinishedAsStudent && !bothFinished)
-                  TextButton.icon(
-                    onPressed: () {
-                      bool hasPending = activeForMe.any((s) => s.status != "Done");
-                      if (hasPending) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("Выполните все текущие задачи перед выпуском!"), 
-                            backgroundColor: Colors.orange,
-                          ),
-                        );
-                      } else {
-                        prov.requestMyCompletion(group.id);
-                      }
-                    },
-                    icon: const Icon(Icons.verified_user_rounded, size: 18, color: Colors.orange),
-                    label: const Text("Я ЗАВЕРШИЛ ОБУЧЕНИЕ", 
-                      style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 11)),
-                  ),
+                // Находим место, где рисуется кнопка "Я ЗАВЕРШИЛ ОБУЧЕНИЕ"
+if (_roadmapFilterIndex == 0 && !iFinishedAsStudent && !bothFinished)
+  TextButton.icon(
+    onPressed: () {
+      // Проверка на наличие невыполненных задач
+      bool hasPending = activeForMe.any((s) => s.status != "Done");
+      if (hasPending) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Выполните все текущие задачи!")),
+        );
+      } else {
+        prov.requestMyCompletion(group.id);
+      }
+    },
+    icon: const Icon(Icons.verified_user_rounded, size: 18, color: Colors.orange),
+    label: const Text("Я ЗАВЕРШИЛ ОБУЧЕНИЕ", 
+      style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 11)),
+  ),
               ],
             ),
           ),
@@ -1570,7 +1595,7 @@ Widget _buildCompletionRequestBubble(MessageDto m, bool isMe) {
       decoration: BoxDecoration(
         color: const Color(0xFFE3F2FD),
         borderRadius: BorderRadius.circular(25),
-        border: Border.all(color: Colors.blue.withValues(alpha: 0.3), width: 2),
+        border: Border.all(color: Colors.blue.withOpacity(0.3), width: 2),
       ),
       child: Column(
         children: [
@@ -1583,8 +1608,11 @@ Widget _buildCompletionRequestBubble(MessageDto m, bool isMe) {
               children: [
                 Expanded(
                   child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                    // Если мы уже нажали кнопку, она становится disabled (null)
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      disabledBackgroundColor: Colors.green.withOpacity(0.5),
+                    ),
+                    // Если идет загрузка, onPressed = null (кнопка некликабельна)
                     onPressed: _isSystemActionLoading ? null : _confirmFinish, 
                     child: _isSystemActionLoading 
                       ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
@@ -1594,13 +1622,12 @@ Widget _buildCompletionRequestBubble(MessageDto m, bool isMe) {
                 const SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: _isSystemActionLoading ? Colors.grey : Colors.blue),
+                    ),
                     // Блокируем и вторую кнопку тоже
-                    onPressed: _isSystemActionLoading ? null : () async {
-                      setState(() => _isSystemActionLoading = true);
-                      await context.read<GroupProvider>().rejectCompletion(widget.group.id);
-                      // Здесь не сбрасываем loading, SignalR сам обновит сообщения
-                    },
-                    child: const Text("ЕЩЕ НЕТ"),
+                    onPressed: _isSystemActionLoading ? null : _rejectFinish,
+                    child: Text("ЕЩЕ НЕТ", style: TextStyle(color: _isSystemActionLoading ? Colors.grey : Colors.blue)),
                   ),
                 ),
               ],

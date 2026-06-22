@@ -2259,9 +2259,9 @@ void _showAddMaterialModal(int goalId) {
 
 
 
-  void _showInvitePartnerModal(GoalResponse goal) {
-    final userProv = context.read<UserProvider>();
-    userProv.loadFriends();
+void _showInvitePartnerModal(GoalResponse initialGoal) {
+    // Принудительно подгружаем список друзей перед открытием
+    context.read<UserProvider>().loadFriends();
     
     MainDashboardLayout.showHiveDialog(
       context,
@@ -2277,26 +2277,40 @@ void _showAddMaterialModal(int goalId) {
             const SizedBox(height: 20),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 350),
-              child: Consumer<UserProvider>(
-                builder: (ctx, prov, _) {
-                  if (prov.friends.isEmpty) return const Center(child: Text("У вас пока нет друзей"));
+              child: Consumer2<UserProvider, GoalProvider>( // Используем Consumer2 для реактивности обоих провайдеров
+                builder: (ctx, uProv, gProv, _) {
+                  // Ищем актуальное состояние цели в общем списке провайдера
+                  final currentGoal = gProv.goals.firstWhere((g) => g.id == initialGoal.id, orElse: () => initialGoal);
+                  
+                  if (uProv.friends.isEmpty) return const Center(child: Text("У вас пока нет друзей"));
+                  
                   return ListView.builder(
                     shrinkWrap: true,
-                    itemCount: prov.friends.length,
+                    itemCount: uProv.friends.length,
                     itemBuilder: (c, i) {
-                      final f = prov.friends[i];
-                      bool alreadyIn = goal.collaborators.any((c) => c.id == f.id);
+                      final f = uProv.friends[i];
+                      
+                      // ПРОВЕРКА: пользователь уже в команде (по ID или по имени без учета регистра)
+                      bool alreadyIn = currentGoal.collaborators.any((member) => 
+                        member.id == f.id || member.name.toLowerCase().trim() == f.username.toLowerCase().trim()
+                      );
+
                       return ListTile(
                         leading: _userAvatar(f.avatarUrl, f.username, radius: 18),
                         title: Text(f.username, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                         trailing: alreadyIn 
-                          ? const Text("УЖЕ В ПУТИ", style: TextStyle(color: Colors.grey, fontSize: 10, fontWeight: FontWeight.bold))
+                          ? Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(10)),
+                              child: const Text("В КОМАНДЕ", style: TextStyle(color: Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
+                            )
                           : ElevatedButton(
+                              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
                               onPressed: () {
-                                context.read<GoalProvider>().invitePartner(goal.id, f.id, goal.userId);
+                                context.read<GoalProvider>().invitePartner(initialGoal.id, f.id, initialGoal.userId);
                                 Navigator.pop(context);
                               },
-                              child: const Text("ПОЗВАТЬ"),
+                              child: const Text("ПОЗВАТЬ", style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
                             ),
                       );
                     },
