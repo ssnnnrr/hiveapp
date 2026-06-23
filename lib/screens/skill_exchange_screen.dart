@@ -109,21 +109,26 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
     );
   }
 
+// --- ПАНЕЛЬ ПОИСКА (РАСТЯНУТАЯ НА ВСЮ ШИРИНУ) ---
   Widget _buildSearchHeader(UserProvider prov) {
     return Container(
-      padding: const EdgeInsets.all(25),
+      width: double.infinity, // Растягиваем сам контейнер
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 20),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 20,
+          ),
         ],
       ),
       child: Row(
         children: [
-          // Поле ввода имени
+          // 1. Поиск - даем ему самый большой коэффициент flex (растягивается больше всех)
           Expanded(
-            flex: 3,
+            flex: 4, 
             child: TextField(
               controller: _searchCtrl,
               onChanged: (_) => _onSearch(),
@@ -134,16 +139,15 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
             ),
           ),
           const SizedBox(width: 20),
-
-          // --- ИСПРАВЛЕННЫЙ БЛОК ВЫБОРА НАВЫКА ---
+          
+          // 2. Выбор навыка - тоже растягиваем, но чуть меньше (flex: 3)
           Expanded(
-            flex: 2,
+            flex: 3, 
             child: Material(
-              // ДОБАВЛЕНО: Material для корректной отрисовки элементов списка
               color: Colors.transparent,
               child: DropdownButtonFormField<int>(
                 value: _selectedSkillId,
-                // Фикс цвета выпадающего меню, чтобы оно не наследовало прозрачность
+                isExpanded: true, // Растягивает текст внутри списка
                 dropdownColor: Colors.white,
                 decoration: AppDecorations.smartInput(
                   "Категория навыка",
@@ -152,15 +156,12 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
                 items: [
                   const DropdownMenuItem(
                     value: 0,
-                    child: Text(
-                      "Все компетенции",
-                      style: TextStyle(fontSize: 14),
-                    ),
+                    child: Text("Все компетенции", style: TextStyle(fontSize: 14)),
                   ),
                   ...prov.allSkills.map(
                     (s) => DropdownMenuItem(
                       value: s.id,
-                      child: Text(s.name, style: TextStyle(fontSize: 14)),
+                      child: Text(s.name, style: const TextStyle(fontSize: 14)),
                     ),
                   ),
                 ],
@@ -171,9 +172,9 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
               ),
             ),
           ),
-
           const SizedBox(width: 20),
-          // Переключатель Учитель/Ученик
+          
+          // 3. Переключатель - оставляем фиксированным по контенту
           Container(
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
@@ -181,6 +182,7 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 _buildToggleButton("Учителя", "Teaching"),
                 _buildToggleButton("Ученики", "Learning"),
