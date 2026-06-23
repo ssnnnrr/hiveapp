@@ -167,7 +167,7 @@ class TaskResponse {
   final String goalTitle;
   final int creatorId;
   final int? assigneeId;
-  final bool isSolo; // Поле добавлено
+  final bool isSolo;
   final List<TaskCommentDto> comments;
   final String? artifactUrl;
   final String? studentComment;
@@ -191,7 +191,6 @@ class TaskResponse {
     required this.completions,
   });
 
-  // ИСПРАВЛЕННЫЙ copyWith
   TaskResponse copyWith({
     int? id,
     String? title,
@@ -204,7 +203,7 @@ class TaskResponse {
     String? artifactUrl,
     String? studentComment,
     String? teacherComment,
-    bool? isSolo, // Исправлен синтаксис
+    bool? isSolo,
     List<UserMinimalDto>? completions,
     List<TaskCommentDto>? comments,
   }) {
@@ -216,7 +215,7 @@ class TaskResponse {
       goalId: goalId ?? this.goalId,
       goalTitle: goalTitle ?? this.goalTitle,
       creatorId: creatorId ?? this.creatorId,
-      isSolo: isSolo ?? this.isSolo, // Исправлено (убран json)
+      isSolo: isSolo ?? this.isSolo,
       assigneeId: assigneeId ?? this.assigneeId,
       artifactUrl: artifactUrl ?? this.artifactUrl,
       studentComment: studentComment ?? this.studentComment,
@@ -227,41 +226,59 @@ class TaskResponse {
   }
 
   factory TaskResponse.fromJson(Map<String, dynamic> json) {
+    // Безопасно парсим вложенные объекты
     final fetchedCompletions = (json['completions'] as List? ?? [])
         .map((e) => UserMinimalDto.fromJson(e))
         .toList();
 
+    final fetchedComments = (json['comments'] as List? ?? [])
+        .map((e) => TaskCommentDto.fromJson(e))
+        .toList();
+
+    // Обработка даты: нормализация на полдень (12:00) помогает избежать 
+    // сдвига даты на один день назад/вперед при переходе между UTC и Local
     String rawDate = json['dueDate'] ?? DateTime.now().toIso8601String();
     DateTime parsed = DateTime.parse(rawDate).toLocal();
     DateTime normalizedDate = DateTime(
       parsed.year,
       parsed.month,
       parsed.day,
-      12,
-      0,
-      0,
+      12, 0, 0,
     );
 
     return TaskResponse(
-      id: json['id'] ?? 0,
+      id: (json['id'] ?? 0).toInt(), // Принудительно в int
       title: json['title'] ?? '',
       dueDate: normalizedDate,
       status: json['status'] ?? 'ToDo',
-      goalId: json['goalId'] ?? 0,
+      goalId: (json['goalId'] ?? 0).toInt(),
       goalTitle: json['goalTitle'] ?? '',
-      isSolo: json['isSolo'] ?? false, // Добавлено
-      creatorId: json['creatorId'] ?? 0,
-      assigneeId: json['assigneeId'],
+      isSolo: json['isSolo'] ?? false,
+      creatorId: (json['creatorId'] ?? 0).toInt(),
+      assigneeId: json['assigneeId']?.toInt(),
       artifactUrl: json['artifactUrl'],
       studentComment: json['studentComment'],
       teacherComment: json['teacherComment'],
       completions: fetchedCompletions,
-      comments:
-          (json['comments'] as List?)
-              ?.map((e) => TaskCommentDto.fromJson(e))
-              .toList() ??
-          [],
+      comments: fetchedComments,
     );
+  }
+
+  // Метод для отправки данных на сервер
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'dueDate': dueDate.toIso8601String(),
+      'status': status,
+      'goalId': goalId,
+      'isSolo': isSolo,
+      'creatorId': creatorId,
+      'assigneeId': assigneeId,
+      'artifactUrl': artifactUrl,
+      'studentComment': studentComment,
+      'teacherComment': teacherComment,
+    };
   }
 }
 

@@ -88,7 +88,7 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
           Icon(
             Icons.person_search_rounded,
             size: 80,
-            color: Colors.grey.withValues(alpha:0.2),
+            color: Colors.grey.withValues(alpha: 0.2),
           ),
           const SizedBox(height: 20),
           const Text(
@@ -109,7 +109,6 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
     );
   }
 
-  // --- ПАНЕЛЬ ПОИСКА (WEB СТИЛЬ) ---
   Widget _buildSearchHeader(UserProvider prov) {
     return Container(
       padding: const EdgeInsets.all(25),
@@ -117,10 +116,7 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 20,
-          ),
+          BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 20),
         ],
       ),
       child: Row(
@@ -138,36 +134,44 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
             ),
           ),
           const SizedBox(width: 20),
-          // Выбор навыка (Dropdown)
+
+          // --- ИСПРАВЛЕННЫЙ БЛОК ВЫБОРА НАВЫКА ---
           Expanded(
             flex: 2,
-            child: DropdownButtonFormField<int>(
-              value: _selectedSkillId,
-              decoration: AppDecorations.smartInput(
-                "Категория навыка",
-                Icons.psychology_rounded,
+            child: Material(
+              // ДОБАВЛЕНО: Material для корректной отрисовки элементов списка
+              color: Colors.transparent,
+              child: DropdownButtonFormField<int>(
+                value: _selectedSkillId,
+                // Фикс цвета выпадающего меню, чтобы оно не наследовало прозрачность
+                dropdownColor: Colors.white,
+                decoration: AppDecorations.smartInput(
+                  "Категория навыка",
+                  Icons.psychology_rounded,
+                ),
+                items: [
+                  const DropdownMenuItem(
+                    value: 0,
+                    child: Text(
+                      "Все компетенции",
+                      style: TextStyle(fontSize: 14),
+                    ),
+                  ),
+                  ...prov.allSkills.map(
+                    (s) => DropdownMenuItem(
+                      value: s.id,
+                      child: Text(s.name, style: TextStyle(fontSize: 14)),
+                    ),
+                  ),
+                ],
+                onChanged: (val) {
+                  setState(() => _selectedSkillId = val ?? 0);
+                  _onSearch();
+                },
               ),
-              items: [
-                const DropdownMenuItem(
-                  value: 0,
-                  child: Text(
-                    "Все компетенции",
-                    style: TextStyle(fontSize: 14),
-                  ),
-                ),
-                ...prov.allSkills.map(
-                  (s) => DropdownMenuItem(
-                    value: s.id,
-                    child: Text(s.name, style: const TextStyle(fontSize: 14)),
-                  ),
-                ),
-              ],
-              onChanged: (val) {
-                setState(() => _selectedSkillId = val ?? 0);
-                _onSearch();
-              },
             ),
           ),
+
           const SizedBox(width: 20),
           // Переключатель Учитель/Ученик
           Container(
@@ -222,162 +226,196 @@ class _SkillExchangeScreenState extends State<SkillExchangeScreen> {
     );
   }
 
-Widget _buildUserWebCard(UserDto user) {
-  bool isMatch = user.synergyLevel == "Ideal";
-  
-  return Container(
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(24),
-      border: Border.all(
-        color: isMatch ? Colors.amber.shade300 : Colors.transparent,
-        width: 2,
-      ),
-      boxShadow: [
-        BoxShadow(
-          color: isMatch ? Colors.amber.withValues(alpha:0.1) : Colors.black.withValues(alpha:0.04),
-          blurRadius: 20,
-          offset: const Offset(0, 10),
-        ),
-      ],
-    ),
-    child: Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => UserDetailScreen(userId: user.id)),
-        ),
+  Widget _buildUserWebCard(UserDto user) {
+    bool isMatch = user.synergyLevel == "Ideal";
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(24),
-        child: Padding(
-          padding: const EdgeInsets.all(25),
-          child: Column(
-            children: [
-              // Метод отрисовки аватара и имени с галочкой
-              _buildAvatarAndName(user), 
-              
-              const SizedBox(height: 15),
-
-              // Блок реального рейтинга на основе отзывов
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _analyticChip(
-                    Icons.star_rounded, 
-                    user.rating > 0 ? user.rating.toStringAsFixed(1) : "0.0", 
-                    Colors.amber
-                  ),
-                ],
-              ),
-              
-              const Spacer(),
-              if (isMatch) 
-                _buildStatusBadge(
-                  title: "ИДЕАЛЬНЫЙ МЭТЧ",
-                  color: Colors.orange,
-                  bgColor: Colors.amber.shade50,
-                ) 
-              else 
-                const Text("", style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.w500)),
-              const Spacer(),
-
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isMatch ? Colors.amber : AppColors.primary,
-                  minimumSize: const Size(double.infinity, 50),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                ),
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => UserDetailScreen(userId: user.id)),
-                ),
-                child: const Text("ПРОФИЛЬ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
+        border: Border.all(
+          color: isMatch ? Colors.amber.shade300 : Colors.transparent,
+          width: 2,
         ),
-      ),
-    ),
-  );
-}
-
-Widget _buildAvatarAndName(UserDto user) {
-  return Column(
-    children: [
-      CircleAvatar(
-        radius: 45,
-        backgroundColor: Colors.grey.shade100,
-        backgroundImage: user.avatarUrl != null
-            ? MemoryImage(base64Decode(user.avatarUrl!))
-            : null,
-        child: user.avatarUrl == null
-            ? const Icon(Icons.person, size: 40, color: Colors.grey)
-            : null,
-      ),
-      const SizedBox(height: 15),
-      Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Flexible(
-            child: Text(
-              user.username,
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.navy),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+        boxShadow: [
+          BoxShadow(
+            color: isMatch
+                ? Colors.amber.withValues(alpha: 0.1)
+                : Colors.black.withValues(alpha: 0.04),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
           ),
-          // СИНЯЯ ГАЛОЧКА, если пройдена верификация навыка Teaching
-          if (user.isVerified) 
-            const Padding(
-              padding: EdgeInsets.only(left: 6),
-              child: Icon(Icons.verified, color: Colors.blue, size: 20),
-            ),
         ],
       ),
-    ],
-  );
-}
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => UserDetailScreen(userId: user.id),
+            ),
+          ),
+          borderRadius: BorderRadius.circular(24),
+          child: Padding(
+            padding: const EdgeInsets.all(25),
+            child: Column(
+              children: [
+                // Метод отрисовки аватара и имени с галочкой
+                _buildAvatarAndName(user),
 
-Widget _analyticChip(IconData icon, String label, Color col) {
-  return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-    decoration: BoxDecoration(
-      color: col.withValues(alpha:0.1),
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: Row(
-      children: [
-        Icon(icon, size: 14, color: col),
-        const SizedBox(width: 4),
-        Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: col)),
-      ],
-    ),
-  );
-}
+                const SizedBox(height: 15),
 
+                // Блок реального рейтинга на основе отзывов
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _analyticChip(
+                      Icons.star_rounded,
+                      user.rating > 0 ? user.rating.toStringAsFixed(1) : "0.0",
+                      Colors.amber,
+                    ),
+                  ],
+                ),
 
+                const Spacer(),
+                if (isMatch)
+                  _buildStatusBadge(
+                    title: "ИДЕАЛЬНЫЙ МЭТЧ",
+                    color: Colors.orange,
+                    bgColor: Colors.amber.shade50,
+                  )
+                else
+                  const Text(
+                    "",
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                const Spacer(),
 
-Widget _buildStatusBadge({required String title, required Color color, required Color bgColor}) {
-  return Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: bgColor, 
-          borderRadius: BorderRadius.circular(12)
-        ),
-        child: Text(
-          title,
-          style: TextStyle(
-            color: color, 
-            fontSize: 10, 
-            fontWeight: FontWeight.w900, 
-            letterSpacing: 0.5
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isMatch ? Colors.amber : AppColors.primary,
+                    minimumSize: const Size(double.infinity, 50),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                  ),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => UserDetailScreen(userId: user.id),
+                    ),
+                  ),
+                  child: const Text(
+                    "ПРОФИЛЬ",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
-    ],
-  );
-}
+    );
+  }
+
+  Widget _buildAvatarAndName(UserDto user) {
+    return Column(
+      children: [
+        CircleAvatar(
+          radius: 45,
+          backgroundColor: Colors.grey.shade100,
+          backgroundImage: user.avatarUrl != null
+              ? MemoryImage(base64Decode(user.avatarUrl!))
+              : null,
+          child: user.avatarUrl == null
+              ? const Icon(Icons.person, size: 40, color: Colors.grey)
+              : null,
+        ),
+        const SizedBox(height: 15),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(
+              child: Text(
+                user.username,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  color: AppColors.navy,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            // СИНЯЯ ГАЛОЧКА, если пройдена верификация навыка Teaching
+            if (user.isVerified)
+              const Padding(
+                padding: EdgeInsets.only(left: 6),
+                child: Icon(Icons.verified, color: Colors.blue, size: 20),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _analyticChip(IconData icon, String label, Color col) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: col.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: col),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: col,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge({
+    required String title,
+    required Color color,
+    required Color bgColor,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            title,
+            style: TextStyle(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
